@@ -12,7 +12,7 @@
 
 ## Live Demo
 
-🔗 **[starkzappypay.vercel.app](https://starkzappypay.vercel.app)** *(update with your deployed URL)*
+🔗 **[starkzappypay.vercel.app](https://starkzappypay.vercel.app)
 
 ---
 
