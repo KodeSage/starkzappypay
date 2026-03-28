@@ -6,7 +6,8 @@ import { StarkSigner, ArgentXV050Preset } from 'starkzap'
 import Layout from '../components/Layout'
 import { TOKENS, Token, parseAmount, formatAmount } from '../lib/tokens'
 import { sdk, RPC_URL } from '../lib/sdk'
-import { resolveUsername, type UsernameRecord, logTip, getTips, type TipRecord, getGoalProgress } from '../lib/supabase'
+import { QRCodeCanvas } from 'qrcode.react'
+import { resolveUsername, type UsernameRecord, logTip, getTips, type TipRecord, getGoalProgress, getTopSupporters, type TopSupporter, getTipperTipCount } from '../lib/supabase'
 import { fetchSwapQuote, buildSwapCalls, type SwapQuote } from '../lib/avnu'
 
 const DERIVATION_MSG = 'starkzappypay: authorize my Starknet wallet'
@@ -107,6 +108,17 @@ export default function Pay() {
   const pendingConnectRef = useRef(false)
   const [addressCopied, setAddressCopied] = useState(false)
 
+  // QR modal
+  const [showQR, setShowQR] = useState(false)
+  const qrRef = useRef<HTMLCanvasElement>(null)
+
+  // Leaderboard
+  const [topSupporters, setTopSupporters] = useState<TopSupporter[]>([])
+  const [wallTab, setWallTab] = useState<'recent' | 'top'>('recent')
+
+  // Tipping streak
+  const [tipperCount, setTipperCount] = useState<number | null>(null)
+
   const needsSwap = !!(
     resolved?.preferred_token &&
     selectedToken.symbol !== preferredTokenSymbol &&
@@ -191,6 +203,18 @@ export default function Pay() {
       setFetchingQuote(false)
     }
   }, [connectedAddress, amount, selectedToken.symbol, preferredTokenSymbol])
+
+  // Fetch top supporters when page loads
+  useEffect(() => {
+    if (!displayName) return
+    getTopSupporters(displayName, preferredTokenSymbol).then(setTopSupporters)
+  }, [displayName, preferredTokenSymbol])
+
+  // Check how many times this wallet has tipped this creator
+  useEffect(() => {
+    if (walletState.status !== 'connected' || !displayName) return
+    getTipperTipCount(displayName, walletState.address).then(setTipperCount)
+  }, [walletState.status, displayName])
 
   const deriveAndConnect = async () => {
     const evmWallet = wallets.find((w) => w.walletClientType === 'privy') ?? wallets[0]
@@ -362,6 +386,7 @@ export default function Pay() {
             amount: logAmount,
             token: logToken,
             tx_hash: transferTx.hash,
+            tipper_address: walletState.address.toLowerCase(),
           }).catch(console.error)
         }
 
@@ -394,6 +419,7 @@ export default function Pay() {
           amount,
           token: selectedToken.symbol,
           tx_hash: tx.hash,
+          tipper_address: walletState.address.toLowerCase(),
         }).catch(console.error)
       }
 
@@ -468,8 +494,74 @@ export default function Pay() {
     <Layout>
       <div className="w-full max-w-5xl space-y-4">
 
+        {/* QR code modal */}
+        {showQR && displayName && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+            onClick={() => setShowQR(false)}
+          >
+            <div
+              className="bg-slate-900 rounded-2xl border border-slate-700 p-6 space-y-4 max-w-xs w-full"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between">
+                <p className="text-white font-semibold text-sm">QR — @{displayName}</p>
+                <button
+                  onClick={() => setShowQR(false)}
+                  className="text-slate-500 hover:text-slate-300 transition-colors"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="flex justify-center p-4 bg-[#0f172a] rounded-xl">
+                <QRCodeCanvas
+                  ref={qrRef}
+                  value={`https://starkzappypay.xyz/pay/@${displayName}`}
+                  size={200}
+                  bgColor="#0f172a"
+                  fgColor="#a78bfa"
+                  level="M"
+                />
+              </div>
+              <p className="text-slate-500 text-xs text-center break-all">
+                starkzappypay.xyz/pay/@{displayName}
+              </p>
+              <button
+                onClick={() => {
+                  if (!qrRef.current) return
+                  const dataUrl = qrRef.current.toDataURL('image/png')
+                  const a = document.createElement('a')
+                  a.href = dataUrl
+                  a.download = `starkzap-${displayName}-qr.png`
+                  a.click()
+                }}
+                className="w-full bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-sm font-medium rounded-xl py-2.5 transition-colors flex items-center justify-center gap-2"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                Download PNG
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Recipient card */}
         <div className="bg-slate-900 rounded-2xl border border-slate-800 p-6 text-center space-y-3">
+          {displayName && (
+            <div className="flex justify-end">
+              <button
+                onClick={() => setShowQR(true)}
+                title="Get QR code"
+                className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-violet-400 border border-slate-700 hover:border-violet-500/40 bg-slate-800 hover:bg-violet-500/10 rounded-lg px-2.5 py-1.5 transition-all"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
+                </svg>
+                QR
+              </button>
+            </div>
+          )}
           <div className="w-16 h-16 rounded-full bg-gradient-to-br from-violet-500/30 to-violet-700/10 border border-violet-500/30 flex items-center justify-center mx-auto text-3xl">
             ⚡
           </div>
@@ -649,6 +741,17 @@ export default function Pay() {
                   </p>
                 </div>
               </div>
+
+              {/* Tipping streak banner */}
+              {tipperCount !== null && tipperCount > 0 && (
+                <div className="bg-violet-500/10 border border-violet-500/20 rounded-xl px-4 py-2.5 flex items-center gap-2">
+                  <span className="text-lg">🔥</span>
+                  <p className="text-violet-300 text-sm">
+                    You've supported <span className="font-semibold">@{displayName}</span>{' '}
+                    <span className="font-semibold">{tipperCount} time{tipperCount !== 1 ? 's' : ''}</span> before!
+                  </p>
+                </div>
+              )}
 
               {/* Token selector */}
               <div className="space-y-2">
@@ -860,83 +963,137 @@ export default function Pay() {
           )}
         </div>
 
-        {/* Wall of Tips */}
-        {tips.length > 0 && (
+        {/* Wall of Tips + Leaderboard */}
+        {(tips.length > 0 || topSupporters.length > 0) && (
           <div className="bg-slate-900 rounded-2xl border border-slate-800 p-5 space-y-4">
             <div className="flex items-center justify-between">
-              <h3 className="text-white font-semibold text-sm">Recent supporters</h3>
-              <span className="text-slate-500 text-xs">{tips.length} tip{tips.length !== 1 ? 's' : ''}</span>
-            </div>
-            <div className="space-y-3">
-              {tips.slice(tipsPage * TIPS_PER_PAGE, (tipsPage + 1) * TIPS_PER_PAGE).map((tip, i) => (
-                <a
-                  key={tip.id ?? i}
-                  href={tip.tx_hash ? `https://voyager.online/tx/${tip.tx_hash}` : undefined}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={`flex items-start gap-3 rounded-xl p-2 -mx-2 transition-colors ${
-                    tip.tx_hash ? 'hover:bg-slate-800/60 cursor-pointer group' : ''
+              <div className="flex items-center gap-1 bg-slate-800 rounded-lg p-0.5">
+                <button
+                  onClick={() => setWallTab('recent')}
+                  className={`text-xs px-3 py-1.5 rounded-md font-medium transition-colors ${
+                    wallTab === 'recent'
+                      ? 'bg-slate-700 text-white'
+                      : 'text-slate-500 hover:text-slate-300'
                   }`}
                 >
-                  <div className="w-8 h-8 rounded-full bg-violet-500/20 border border-violet-500/20 flex items-center justify-center text-sm font-bold text-violet-300 flex-shrink-0 uppercase">
-                    {tip.tipper_name ? tip.tipper_name.slice(0, 1) : '?'}
+                  Recent
+                </button>
+                {topSupporters.length > 0 && (
+                  <button
+                    onClick={() => setWallTab('top')}
+                    className={`text-xs px-3 py-1.5 rounded-md font-medium transition-colors ${
+                      wallTab === 'top'
+                        ? 'bg-slate-700 text-white'
+                        : 'text-slate-500 hover:text-slate-300'
+                    }`}
+                  >
+                    Top Supporters
+                  </button>
+                )}
+              </div>
+              <span className="text-slate-500 text-xs">{tips.length} tip{tips.length !== 1 ? 's' : ''}</span>
+            </div>
+
+            {/* Top supporters view */}
+            {wallTab === 'top' && (
+              <div className="space-y-2">
+                {topSupporters.map((s, i) => (
+                  <div key={s.tipper_name} className="flex items-center gap-3 py-1.5">
+                    <span className={`text-xs font-bold w-5 flex-shrink-0 ${
+                      i === 0 ? 'text-yellow-400' : i === 1 ? 'text-slate-300' : i === 2 ? 'text-orange-500' : 'text-slate-600'
+                    }`}>
+                      #{i + 1}
+                    </span>
+                    <div className="w-8 h-8 rounded-full bg-violet-500/20 border border-violet-500/20 flex items-center justify-center text-sm font-bold text-violet-300 flex-shrink-0 uppercase">
+                      {s.tipper_name ? s.tipper_name.slice(0, 1) : '?'}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-white text-sm font-medium truncate">{s.tipper_name || 'Anonymous'}</p>
+                      <p className="text-slate-500 text-xs">
+                        {s.tip_count} tip{s.tip_count !== 1 ? 's' : ''}
+                        {s.total_preferred > 0 && ` · ${s.total_preferred.toFixed(s.total_preferred % 1 === 0 ? 0 : 2)} ${preferredTokenSymbol}`}
+                      </p>
+                    </div>
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <span className="text-white text-sm font-medium truncate">
-                          {tip.tipper_name || 'Anonymous'}
-                        </span>
+                ))}
+              </div>
+            )}
+
+            {/* Recent tips view */}
+            {wallTab === 'recent' && (
+              <>
+                <div className="space-y-3">
+                  {tips.slice(tipsPage * TIPS_PER_PAGE, (tipsPage + 1) * TIPS_PER_PAGE).map((tip, i) => (
+                    <a
+                      key={tip.id ?? i}
+                      href={tip.tx_hash ? `https://voyager.online/tx/${tip.tx_hash}` : undefined}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={`flex items-start gap-3 rounded-xl p-2 -mx-2 transition-colors ${
+                        tip.tx_hash ? 'hover:bg-slate-800/60 cursor-pointer group' : ''
+                      }`}
+                    >
+                      <div className="w-8 h-8 rounded-full bg-violet-500/20 border border-violet-500/20 flex items-center justify-center text-sm font-bold text-violet-300 flex-shrink-0 uppercase">
+                        {tip.tipper_name ? tip.tipper_name.slice(0, 1) : '?'}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className="text-white text-sm font-medium truncate">
+                              {tip.tipper_name || 'Anonymous'}
+                            </span>
+                            {tip.tx_hash && (
+                              <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3 text-slate-600 group-hover:text-violet-400 flex-shrink-0 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                              </svg>
+                            )}
+                          </div>
+                          <span className="text-violet-400 text-xs font-semibold flex-shrink-0">
+                            {tip.amount} {tip.token}
+                          </span>
+                        </div>
+                        {tip.tipper_message && (
+                          <p className="text-slate-400 text-xs mt-0.5 leading-relaxed line-clamp-2">
+                            "{tip.tipper_message}"
+                          </p>
+                        )}
                         {tip.tx_hash && (
-                          <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3 text-slate-600 group-hover:text-violet-400 flex-shrink-0 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                          </svg>
+                          <p className="text-slate-600 group-hover:text-slate-500 text-[10px] mt-0.5 font-mono transition-colors">
+                            {tip.tx_hash.slice(0, 10)}…{tip.tx_hash.slice(-6)}
+                          </p>
                         )}
                       </div>
-                      <span className="text-violet-400 text-xs font-semibold flex-shrink-0">
-                        {tip.amount} {tip.token}
-                      </span>
-                    </div>
-                    {tip.tipper_message && (
-                      <p className="text-slate-400 text-xs mt-0.5 leading-relaxed line-clamp-2">
-                        "{tip.tipper_message}"
-                      </p>
-                    )}
-                    {tip.tx_hash && (
-                      <p className="text-slate-600 group-hover:text-slate-500 text-[10px] mt-0.5 font-mono transition-colors">
-                        {tip.tx_hash.slice(0, 10)}…{tip.tx_hash.slice(-6)}
-                      </p>
-                    )}
+                    </a>
+                  ))}
+                </div>
+                {tips.length > TIPS_PER_PAGE && (
+                  <div className="flex items-center justify-between pt-1 border-t border-slate-800">
+                    <button
+                      onClick={() => setTipsPage((p) => Math.max(0, p - 1))}
+                      disabled={tipsPage === 0}
+                      className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors px-2 py-1 rounded-lg hover:bg-slate-800"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                      </svg>
+                      Prev
+                    </button>
+                    <span className="text-slate-600 text-xs">
+                      {tipsPage + 1} / {Math.ceil(tips.length / TIPS_PER_PAGE)}
+                    </span>
+                    <button
+                      onClick={() => setTipsPage((p) => Math.min(Math.ceil(tips.length / TIPS_PER_PAGE) - 1, p + 1))}
+                      disabled={(tipsPage + 1) * TIPS_PER_PAGE >= tips.length}
+                      className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors px-2 py-1 rounded-lg hover:bg-slate-800"
+                    >
+                      Next
+                      <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      </svg>
+                    </button>
                   </div>
-                </a>
-              ))}
-            </div>
-            {tips.length > TIPS_PER_PAGE && (
-              <div className="flex items-center justify-between pt-1 border-t border-slate-800">
-                <button
-                  onClick={() => setTipsPage((p) => Math.max(0, p - 1))}
-                  disabled={tipsPage === 0}
-                  className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors px-2 py-1 rounded-lg hover:bg-slate-800"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                  </svg>
-                  Prev
-                </button>
-                <span className="text-slate-600 text-xs">
-                  {tipsPage + 1} / {Math.ceil(tips.length / TIPS_PER_PAGE)}
-                </span>
-                <button
-                  onClick={() => setTipsPage((p) => Math.min(Math.ceil(tips.length / TIPS_PER_PAGE) - 1, p + 1))}
-                  disabled={(tipsPage + 1) * TIPS_PER_PAGE >= tips.length}
-                  className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors px-2 py-1 rounded-lg hover:bg-slate-800"
-                >
-                  Next
-                  <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                  </svg>
-                </button>
-              </div>
+                )}
+              </>
             )}
           </div>
         )}

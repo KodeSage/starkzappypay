@@ -22,7 +22,14 @@ export interface TipRecord {
   amount: string
   token: string
   tx_hash: string
+  tipper_address?: string
   created_at?: string
+}
+
+export interface TopSupporter {
+  tipper_name: string
+  tip_count: number
+  total_preferred: number
 }
 
 export type ValidationResult =
@@ -90,7 +97,12 @@ export async function resolveAddress(address: string): Promise<UsernameRecord | 
 }
 
 export async function logTip(tip: Omit<TipRecord, 'id' | 'created_at'>): Promise<void> {
-  await supabase.from('tips').insert(tip)
+  const { error } = await supabase.from('tips').insert(tip)
+  // If tipper_address column doesn't exist yet (pre-migration), retry without it
+  if (error?.code === '42703' && tip.tipper_address) {
+    const { tipper_address: _, ...tipWithout } = tip
+    await supabase.from('tips').insert(tipWithout)
+  }
 }
 
 export async function getTips(recipient_username: string): Promise<TipRecord[]> {
@@ -114,4 +126,44 @@ export async function getGoalProgress(
     .eq('token', preferred_token)
   if (!data) return 0
   return data.reduce((sum, row) => sum + parseFloat(row.amount || '0'), 0)
+}
+
+export async function getTopSupporters(
+  recipient_username: string,
+  preferred_token?: string
+): Promise<TopSupporter[]> {
+  const { data } = await supabase
+    .from('tips')
+    .select('tipper_name, amount, token')
+    .eq('recipient_username', recipient_username.toLowerCase())
+  if (!data) return []
+
+  const map = new Map<string, { tip_count: number; total_preferred: number }>()
+  for (const tip of data) {
+    const name = tip.tipper_name || 'Anonymous'
+    const existing = map.get(name) ?? { tip_count: 0, total_preferred: 0 }
+    existing.tip_count++
+    if (preferred_token && tip.token === preferred_token) {
+      existing.total_preferred += parseFloat(tip.amount || '0')
+    }
+    map.set(name, existing)
+  }
+
+  return Array.from(map.entries())
+    .map(([tipper_name, stats]) => ({ tipper_name, ...stats }))
+    .sort((a, b) => b.tip_count - a.tip_count)
+    .slice(0, 10)
+}
+
+export async function getTipperTipCount(
+  recipient_username: string,
+  tipper_address: string
+): Promise<number> {
+  const { count, error } = await supabase
+    .from('tips')
+    .select('*', { count: 'exact', head: true })
+    .eq('recipient_username', recipient_username.toLowerCase())
+    .eq('tipper_address', tipper_address.toLowerCase())
+  if (error) return 0
+  return count ?? 0
 }
