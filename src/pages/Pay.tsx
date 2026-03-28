@@ -75,11 +75,20 @@ export default function Pay() {
   const [sending, setSending] = useState(false)
   const [error, setError] = useState('')
 
-  // pendingConnect: set true only when user explicitly clicks the button
-  // This prevents auto-firing on page load when Privy session is still active
-  // (Privy's iframe isn't ready yet at that point and personal_sign would fail)
   const pendingConnectRef = useRef(false)
   const [addressCopied, setAddressCopied] = useState(false)
+
+  // Detect OAuth redirect landing (Google/Twitter/Discord redirect back to this page)
+  // Set pendingConnect so deriveAndConnect fires once Privy finishes processing the callback
+  useEffect(() => {
+    if (searchParams.has('privy_oauth_code') || searchParams.has('privy_oauth_state')) {
+      pendingConnectRef.current = true
+      setWalletState({ status: 'connecting', step: 'privy-login' })
+      // Strip the OAuth params from the URL so the page looks clean
+      navigate(window.location.pathname, { replace: true })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Fires after Privy login completes and wallets populate
   useEffect(() => {

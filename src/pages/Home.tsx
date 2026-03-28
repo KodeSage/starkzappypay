@@ -211,7 +211,7 @@ export default function Home() {
             {
               icon: "🔐",
               label: "Seedless",
-              desc: "Sign in with Google or email",
+              desc: "Sign in with Email or Farcaster",
             },
             { icon: "⚡", label: "Instant", desc: "Confirmed in seconds" },
           ].map((f) => (

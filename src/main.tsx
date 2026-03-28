@@ -11,7 +11,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <PrivyProvider
       appId={PRIVY_APP_ID}
       config={{
-        loginMethods: ['email', 'google', 'apple', 'twitter', 'discord'],
+        loginMethods: ['email',  'farcaster'],
         appearance: {
           theme: 'dark',
           accentColor: '#7c3aed',

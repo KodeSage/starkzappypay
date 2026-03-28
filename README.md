@@ -27,7 +27,7 @@
 ### For tippers
 1. Open the creator's link — `starkzappypay.vercel.app/pay/@alice`
 2. The username resolves to the creator's address automatically
-3. Sign in with Google, email, Apple, or Twitter — no seed phrase, no wallet extension
+3. Sign in with  Email or Farcaster — no seed phrase, no wallet extension
 4. Pick a token (STRK, USDC, ETH), enter an amount, hit Send
 5. Done :zero gas paid
 
