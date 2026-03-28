@@ -49,6 +49,10 @@
 | **Multi-token** | STRK, USDC, ETH — tipper picks at send time |
 | **Token auto-swap** | Tipper sends any token; creator receives their preferred token via AVNU swap |
 | **Wall of Tips** | Live feed of supporters — name, message, amount, and Voyager link per tip |
+| **Top Supporters leaderboard** | Tab on the tip page ranking tippers by cumulative count; drives repeat behaviour |
+| **Tipping streaks** | Returning tippers see "You've supported @alice N times!" — gamification with no extra infra |
+| **QR code generation** | One-click QR modal for any `/pay/@username` link — downloadable PNG, violet-themed |
+| **Auto-tweet after tipping** | Post-success share prompt: pre-filled tweet with creator handle and tip link |
 | **Tip goals** | Creator sets a goal label + target amount; progress bar fills live |
 | **Goal reached UX** | Goal card goes green with "tips still welcome" — form stays open, no hard cap |
 | **On-chain proof** | Every supporter entry links to Voyager for transaction verification |
@@ -161,6 +165,10 @@ await wallet.execute([{
 
 ### v0.2.0
 - Wall of Tips — live supporter feed with names, messages, amounts
+- Top Supporters leaderboard — tab ranking tippers by cumulative tip count
+- Tipping streaks — returning tippers see personalised "N times" banner
+- QR code generation — one-click modal with violet-themed PNG download
+- Auto-tweet after tipping — pre-filled tweet prompting followers to tip the same creator
 - Tip goals — creator-set targets with live progress bar
 - Goal reached UX — green card, "tips still welcome" message, no hard cap
 - Token auto-swap — AVNU v3 two-step sponsored swap flow
