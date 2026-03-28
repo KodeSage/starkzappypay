@@ -7,7 +7,7 @@ import Layout from '../components/Layout'
 import { TOKENS, Token, parseAmount, formatAmount } from '../lib/tokens'
 import { sdk, RPC_URL } from '../lib/sdk'
 import { resolveUsername, type UsernameRecord, logTip, getTips, type TipRecord, getGoalProgress } from '../lib/supabase'
-import { fetchSwapQuote, buildSwapCall, type SwapQuote } from '../lib/avnu'
+import { fetchSwapQuote, buildSwapCalls, type SwapQuote } from '../lib/avnu'
 
 const DERIVATION_MSG = 'starkzappypay: authorize my Starknet wallet'
 
@@ -89,6 +89,7 @@ export default function Pay() {
   const [balance, setBalance] = useState<bigint | null>(null)
   const [loadingBalance, setLoadingBalance] = useState(false)
   const [sending, setSending] = useState(false)
+  const [swapStep, setSwapStep] = useState<'swapping' | 'sending' | null>(null)
   const [error, setError] = useState('')
 
   // Tipper identity for wall of tips
@@ -269,12 +270,14 @@ export default function Pay() {
     try {
       const { szWallet } = walletState
       const amountUint256 = uint256.bnToUint256(parsedAmount)
-      let calls
 
       const wantsSwap = resolved?.preferred_token && selectedToken.symbol !== preferredTokenSymbol
 
       if (wantsSwap) {
-        // Fetch a fresh quote right before sending to avoid stale quotes
+        // --- Two-step swap flow ---
+        // The AVNU paymaster can't simulate a swap + transfer in one tx,
+        // so we execute them separately: swap first, then transfer USDC to creator.
+
         const freshQuote = await fetchSwapQuote(
           selectedToken.address,
           preferredTokenObj.address,
@@ -282,39 +285,66 @@ export default function Pay() {
           walletState.address
         )
 
-        if (freshQuote) {
-          // takerAddress = recipient so bought tokens land directly with the creator
-          const swapCallData = await buildSwapCall(freshQuote.quoteId, recipientAddress)
-
-          if (swapCallData) {
-            // 1. Approve AVNU exchange to spend the sell token
-            const approveCall = {
-              contractAddress: selectedToken.address,
-              entrypoint: 'approve',
-              calldata: CallData.compile({
-                spender: swapCallData.contractAddress,
-                amount: { low: amountUint256.low, high: amountUint256.high },
-              }),
-            }
-            calls = [approveCall, swapCallData]
-          }
+        if (!freshQuote) {
+          setError(`Swap to ${preferredTokenSymbol} is currently unavailable. Please try again.`)
+          return
         }
 
-        // Fall back to direct transfer if swap is unavailable
-        if (!calls) {
-          calls = [
+        const swapCalls = await buildSwapCalls(freshQuote.quoteId, walletState.address)
+
+        if (!swapCalls) {
+          setError(`Swap to ${preferredTokenSymbol} is currently unavailable. Please try again.`)
+          return
+        }
+
+        const minReceived = (BigInt(freshQuote.buyAmount) * BigInt(995)) / BigInt(1000)
+        const logToken = preferredTokenSymbol
+        const logAmount = formatAmount(minReceived, preferredTokenObj.decimals)
+
+        // Step 1: Execute approve + swap — USDC lands in sender's wallet
+        setSwapStep('swapping')
+        const swapTx = await szWallet.execute(swapCalls, { feeMode: 'sponsored' })
+
+        // Wait for the swap to confirm so the sender actually holds USDC
+        const rpcProvider = new RpcProvider({ nodeUrl: RPC_URL })
+        await rpcProvider.waitForTransaction(swapTx.hash, { retryInterval: 2000 })
+
+        // Step 2: Transfer USDC from sender to creator
+        setSwapStep('sending')
+        const transferTx = await szWallet.execute(
+          [
             {
-              contractAddress: selectedToken.address,
+              contractAddress: preferredTokenObj.address,
               entrypoint: 'transfer',
               calldata: CallData.compile({
                 recipient: recipientAddress,
-                amount: { low: amountUint256.low, high: amountUint256.high },
+                amount: uint256.bnToUint256(minReceived),
               }),
             },
-          ]
+          ],
+          { feeMode: 'sponsored' }
+        )
+
+        if (displayName) {
+          logTip({
+            recipient_username: displayName,
+            tipper_name: tipperName.trim(),
+            tipper_message: tipperMessage.trim(),
+            amount: logAmount,
+            token: logToken,
+            tx_hash: transferTx.hash,
+          }).catch(console.error)
         }
-      } else {
-        calls = [
+
+        navigate(
+          `/success/${transferTx.hash}?token=${encodeURIComponent(logToken)}&amount=${encodeURIComponent(logAmount)}&recipient=${encodeURIComponent(displayName ?? '')}`
+        )
+        return
+      }
+
+      // --- Direct transfer (no swap needed) ---
+      const tx = await szWallet.execute(
+        [
           {
             contractAddress: selectedToken.address,
             entrypoint: 'transfer',
@@ -323,12 +353,10 @@ export default function Pay() {
               amount: { low: amountUint256.low, high: amountUint256.high },
             }),
           },
-        ]
-      }
+        ],
+        { feeMode: 'sponsored' }
+      )
 
-      const tx = await szWallet.execute(calls, { feeMode: 'sponsored' })
-
-      // Log tip to the wall (fire-and-forget, don't block navigation)
       if (displayName) {
         logTip({
           recipient_username: displayName,
@@ -341,9 +369,10 @@ export default function Pay() {
       }
 
       navigate(
-        `/success/${tx.hash}?token=${selectedToken.symbol}&amount=${encodeURIComponent(amount)}&recipient=${encodeURIComponent(displayName ?? '')}`
+        `/success/${tx.hash}?token=${encodeURIComponent(selectedToken.symbol)}&amount=${encodeURIComponent(amount)}&recipient=${encodeURIComponent(displayName ?? '')}`
       )
     } catch (err) {
+      console.error('[sendTip] failed:', err)
       const msg = err instanceof Error ? err.message : String(err)
       if (msg.toLowerCase().includes('reject') || msg.toLowerCase().includes('cancel')) {
         setError('Transaction cancelled')
@@ -354,6 +383,7 @@ export default function Pay() {
       }
     } finally {
       setSending(false)
+      setSwapStep(null)
     }
   }
 
@@ -431,18 +461,25 @@ export default function Pay() {
 
         {/* Tip goal progress bar */}
         {resolved?.goal_amount && resolved.goal_amount > 0 && (
-          <div className="bg-slate-900 rounded-2xl border border-slate-800 p-5 space-y-3">
+          <div className={`rounded-2xl border p-5 space-y-3 ${
+            goalPct >= 100
+              ? 'bg-emerald-950/40 border-emerald-700/40'
+              : 'bg-slate-900 border-slate-800'
+          }`}>
             <div className="flex items-center justify-between gap-2">
               <div>
-                <p className="text-white text-sm font-semibold">
-                  {resolved.goal_label || 'Tip goal'}
-                </p>
-                <p className="text-slate-500 text-xs mt-0.5">
-                  {goalPct >= 100 ? 'Goal reached!' : `${Math.round(goalPct)}% funded`}
+                <div className="flex items-center gap-1.5">
+                  {goalPct >= 100 && <span className="text-emerald-400 text-sm">✓</span>}
+                  <p className="text-white text-sm font-semibold">
+                    {resolved.goal_label || 'Tip goal'}
+                  </p>
+                </div>
+                <p className={`text-xs mt-0.5 ${goalPct >= 100 ? 'text-emerald-400' : 'text-slate-500'}`}>
+                  {goalPct >= 100 ? 'Goal reached — tips still welcome!' : `${Math.round(goalPct)}% funded`}
                 </p>
               </div>
               <div className="text-right flex-shrink-0">
-                <p className="text-violet-400 text-sm font-bold">
+                <p className={`text-sm font-bold ${goalPct >= 100 ? 'text-emerald-400' : 'text-violet-400'}`}>
                   {goalProgress.toFixed(goalProgress % 1 === 0 ? 0 : 2)}
                 </p>
                 <p className="text-slate-500 text-xs">
@@ -731,8 +768,12 @@ export default function Pay() {
                 disabled={sending || !amount || Number(amount) <= 0}
                 className="w-full bg-violet-600 hover:bg-violet-500 active:bg-violet-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold rounded-xl py-3.5 transition-colors flex items-center justify-center gap-2"
               >
-                {sending
-                  ? <><Spinner />Sending...</>
+                {sending && swapStep === 'swapping'
+                  ? <><Spinner />Swapping tokens…</>
+                  : sending && swapStep === 'sending'
+                  ? <><Spinner />Sending to creator…</>
+                  : sending
+                  ? <><Spinner />Sending…</>
                   : needsSwap
                   ? `Swap & send ${amount || '0'} ${selectedToken.symbol} → ${preferredTokenSymbol}`
                   : `Send ${amount || '0'} ${selectedToken.symbol}`}
@@ -755,15 +796,30 @@ export default function Pay() {
             </div>
             <div className="space-y-3">
               {tips.map((tip, i) => (
-                <div key={tip.id ?? i} className="flex items-start gap-3">
+                <a
+                  key={tip.id ?? i}
+                  href={tip.tx_hash ? `https://voyager.online/tx/${tip.tx_hash}` : undefined}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={`flex items-start gap-3 rounded-xl p-2 -mx-2 transition-colors ${
+                    tip.tx_hash ? 'hover:bg-slate-800/60 cursor-pointer group' : ''
+                  }`}
+                >
                   <div className="w-8 h-8 rounded-full bg-violet-500/20 border border-violet-500/20 flex items-center justify-center text-sm font-bold text-violet-300 flex-shrink-0 uppercase">
                     {tip.tipper_name ? tip.tipper_name.slice(0, 1) : '?'}
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-white text-sm font-medium truncate">
-                        {tip.tipper_name || 'Anonymous'}
-                      </span>
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="text-white text-sm font-medium truncate">
+                          {tip.tipper_name || 'Anonymous'}
+                        </span>
+                        {tip.tx_hash && (
+                          <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3 text-slate-600 group-hover:text-violet-400 flex-shrink-0 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                          </svg>
+                        )}
+                      </div>
                       <span className="text-violet-400 text-xs font-semibold flex-shrink-0">
                         {tip.amount} {tip.token}
                       </span>
@@ -773,8 +829,13 @@ export default function Pay() {
                         "{tip.tipper_message}"
                       </p>
                     )}
+                    {tip.tx_hash && (
+                      <p className="text-slate-600 group-hover:text-slate-500 text-[10px] mt-0.5 font-mono transition-colors">
+                        {tip.tx_hash.slice(0, 10)}…{tip.tx_hash.slice(-6)}
+                      </p>
+                    )}
                   </div>
-                </div>
+                </a>
               ))}
             </div>
           </div>

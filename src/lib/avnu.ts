@@ -1,4 +1,4 @@
-const AVNU_SWAP_API = 'https://starknet.api.avnu.fi'
+const AVNU_API = 'https://starknet.api.avnu.fi/swap/v3'
 
 export interface SwapQuote {
   quoteId: string
@@ -32,8 +32,11 @@ export async function fetchSwapQuote(
       takerAddress,
       size: '1',
     })
-    const res = await fetch(`${AVNU_SWAP_API}/swap/v2/quotes?${params}`)
-    if (!res.ok) return null
+    const res = await fetch(`${AVNU_API}/quotes?${params}`)
+    if (!res.ok) {
+      console.error('[avnu] quote failed', res.status, await res.text().catch(() => ''))
+      return null
+    }
     const body = await res.json()
     const list: SwapQuote[] = Array.isArray(body) ? body : (body.quotes ?? [])
     return list[0] ?? null
@@ -44,22 +47,27 @@ export async function fetchSwapQuote(
 
 /**
  * Ask AVNU to build the swap calldata for a previously fetched quote.
- * Set `takerAddress` to the creator's address so bought tokens land there directly.
- * Returns null if the quote is stale or the API is unavailable.
+ * `takerAddress` must be the wallet that will execute the swap (the sender).
+ * Returns an array of calls (approve + swap) or null if unavailable.
  */
-export async function buildSwapCall(
+export async function buildSwapCalls(
   quoteId: string,
   takerAddress: string,
   slippage = 0.005
-): Promise<SwapCall | null> {
+): Promise<SwapCall[] | null> {
   try {
-    const res = await fetch(`${AVNU_SWAP_API}/swap/v2/execute`, {
+    const res = await fetch(`${AVNU_API}/build`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ quoteId, takerAddress, slippage }),
+      body: JSON.stringify({ quoteId, takerAddress, slippage, includeApprove: true }),
     })
-    if (!res.ok) return null
-    return (await res.json()) as SwapCall
+    if (!res.ok) {
+      console.error('[avnu] build failed', res.status, await res.text().catch(() => ''))
+      return null
+    }
+    const body = await res.json()
+    const calls: SwapCall[] = body.calls ?? (Array.isArray(body) ? body : [body])
+    return calls.length > 0 ? calls : null
   } catch {
     return null
   }
