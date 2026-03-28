@@ -25,9 +25,4 @@ export default defineConfig({
       OPTIONAL_PEER_DEPS.map((pkg) => [pkg, stubPath])
     ),
   },
-  build: {
-    rollupOptions: {
-      external: OPTIONAL_PEER_DEPS,
-    },
-  },
 })
