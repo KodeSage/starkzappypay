@@ -8,7 +8,7 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<Home />} />
-        <Route path="/pay/:address" element={<Pay />} />
+        <Route path="/pay/:identifier" element={<Pay />} />
         <Route path="/success/:txHash" element={<Success />} />
       </Routes>
     </BrowserRouter>

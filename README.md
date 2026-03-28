@@ -6,7 +6,7 @@
 
 > Gasless crypto tip links on Starknet. No wallet setup. No gas fees. Just a link.
 
-**starkzappypay** lets anyone create a shareable payment link and receive STRK, USDC, or ETH from anyone , using only a social login (Google, email, Twitter). Built on Starknet using the [Starkzap SDK](https://docs.starknet.io/build/starkzap/overview).
+**starkzappypay** lets anyone create a shareable payment link and receive STRK, USDC, or ETH from anyone — using only a social login (Google, email, Twitter). Built on Starknet using the [Starkzap SDK](https://docs.starknet.io/build/starkzap/overview).
 
 ---
 
@@ -19,15 +19,17 @@
 ## How It Works
 
 ### For creators
-1. Paste your Starknet address and an optional message
-2. Get a shareable link — `/pay/0x...?msg=Buy+me+a+coffee`
-3. Share it in your bio, Linktree, or anywhere
+1. Enter an optional username (e.g. `@alice`) and your Starknet address
+2. Add an optional message — "Buy me a coffee ☕"
+3. Hit **Generate** — your link is saved and ready: `/pay/@alice`
+4. Share it in your bio, Linktree, or anywhere
 
 ### For tippers
-1. Open the creator's link
-2. Sign in with Google, email, Apple, or Twitter — no seed phrase, no wallet extension
-3. Pick a token (STRK, USDC, ETH), enter an amount, hit Send
-4. Done , zero gas paid
+1. Open the creator's link — `starkzappypay.vercel.app/pay/@alice`
+2. The username resolves to the creator's address automatically
+3. Sign in with Google, email, Apple, or Twitter — no seed phrase, no wallet extension
+4. Pick a token (STRK, USDC, ETH), enter an amount, hit Send
+5. Done :zero gas paid
 
 ---
 
@@ -35,16 +37,17 @@
 
 | Feature | Details |
 |---------|---------|
-| **Gasless transactions** | AVNU Paymaster sponsors all fees , tippers never pay gas |
-| **Social login** | Privy embedded wallet , email, Google, Apple, Twitter, Discord |
+| **Username links** | `/pay/@alice` — clean, human-readable, globally resolvable |
+| **Persistent usernames** | Username → address stored in Supabase, works on any device |
+| **Gasless transactions** | AVNU Paymaster sponsors all fees — tippers never pay gas |
+| **Social login** | Privy embedded wallet — email, Google, Apple, Twitter, Discord |
 | **No seed phrase** | EVM embedded wallet derives a Starknet key via `grindKey` |
 | **Auto account deploy** | Argent account deployed on first use, fee sponsored |
 | **Multi-token** | STRK, USDC, ETH — tipper picks at send time |
-| **Shareable links** | `/pay/:address?msg=...` — works anywhere |
-| **Mainnet** | Deployed and running on Starknet mainnet |
+| **Shareable links** | `/pay/@username` — works anywhere |
+| **Mainnet** | Deployed and running on Starknet Mainnet |
 
 ---
-
 
 
 ## Starkzap SDK Integration
@@ -52,7 +55,7 @@
 starkzappypay is built on three Starkzap modules:
 
 ### 1. Wallets
-Privy handles social login. After authentication, the EVM embedded wallet signs a fixed derivation message. We use `ec.starkCurve.grindKey` to produce a deterministic Starknet private key , no seed phrase ever exposed.
+Privy handles social login. After authentication, the EVM embedded wallet signs a fixed derivation message. We use `ec.starkCurve.grindKey` to produce a deterministic Starknet private key — no seed phrase ever exposed.
 
 ```ts
 const signature = await evmProvider.request({
@@ -64,7 +67,7 @@ const signer = new StarkSigner(starkPrivKey)
 ```
 
 ### 2. Paymaster
-AVNU Paymaster is configured at SDK init. Every transaction is executed with `feeMode: "sponsored"` , users never need gas tokens.
+AVNU Paymaster is configured at SDK init. Every transaction is executed with `feeMode: "sponsored"` — users never need gas tokens.
 
 ```ts
 const sdk = new StarkZap({
@@ -82,7 +85,7 @@ const wallet = await sdk.connectWallet({
 await wallet.ensureReady({ deploy: 'if_needed', feeMode: 'sponsored' })
 ```
 
-### 3. DeFi — Token Transfer
+### 3. DeFi Token Transfer
 ERC-20 transfer executed gaslessly through the connected wallet.
 
 ```ts
@@ -95,23 +98,8 @@ const tx = await wallet.execute([{
 await tx.wait()
 ```
 
----
-
-### Environment Variables
-
-Copy `.env.example` to `.env` and fill in your keys:
-
-```bash
-cp .env.example .env
-```
-
-```env
-VITE_PRIVY_APP_ID=your-privy-app-id
-VITE_AVNU_API_KEY=your-avnu-paymaster-api-key
-```
 
 
----
 
 ## Supported Tokens
 
@@ -125,17 +113,19 @@ VITE_AVNU_API_KEY=your-avnu-paymaster-api-key
 
 ## Important Notes
 
-- The Starknet wallet address shown in the app is **derived from your Privy EVM signature** , it is a fresh address separate from your existing Argent or Braavos wallet
+- The Starknet wallet address shown in the app is **derived from your Privy EVM signature** — it is a fresh address separate from your existing Argent or Braavos wallet
 - Fund this address from your main Starknet wallet before tipping
-- The AVNU API key is currently included in the frontend bundle , for production, proxy paymaster requests through a backend endpoint
+- Usernames are stored in Supabase and resolve globally — any device, any browser
+- The AVNU API key is included in the frontend bundle — for production, proxy paymaster requests through a backend endpoint
 
 ---
 
 ## Built With
 
-- [Starkzap SDK](https://docs.starknet.io/build/starkzap/overview) — wallet + paymaster + DeFi modules for Starknet
+- [Starkzap SDK](https://starkzap.xyz) — wallet + paymaster + DeFi modules for Starknet
 - [Privy](https://privy.io) — embedded wallets and social auth
 - [AVNU](https://avnu.fi) — DEX aggregator and paymaster on Starknet
+- [Supabase](https://supabase.com) — username → address storage
 - [starknet.js](https://starknetjs.com) — Starknet JavaScript library
 - [Voyager](https://voyager.online) — Starknet block explorer
 
@@ -147,4 +137,4 @@ MIT — free to use, fork, and build on.
 
 ---
 
-*Built for the [Starkzap Bounty Program for Builders](https://docs.starknet.io/build/starkzap/overview) · Starknet Mainnet · April 2026*
+*Built for the [Starkzap Builder Program](https://docs.starknet.io/build/starkzap/overview) · Starknet Mainnet · April 2026*

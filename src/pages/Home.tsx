@@ -1,32 +1,61 @@
 import { useState } from 'react'
 import Layout from '../components/Layout'
+import { saveUsername } from '../lib/supabase'
 
 function isValidStarknetAddress(addr: string): boolean {
   return /^0x[0-9a-fA-F]{1,64}$/.test(addr.trim())
 }
 
+function isValidUsername(u: string): boolean {
+  return /^[a-zA-Z0-9_]{1,30}$/.test(u)
+}
+
 export default function Home() {
   const [address, setAddress] = useState('')
+  const [username, setUsername] = useState('')
   const [message, setMessage] = useState('')
   const [link, setLink] = useState('')
   const [copied, setCopied] = useState(false)
   const [error, setError] = useState('')
+  const [saving, setSaving] = useState(false)
 
-  const generateLink = () => {
-    const trimmed = address.trim()
-    if (!trimmed) {
+  const generateLink = async () => {
+    const trimmedAddr = address.trim()
+    const trimmedUser = username.trim().replace(/^@/, '')
+
+    if (!trimmedAddr) {
       setError('Enter your Starknet address')
       return
     }
-    if (!isValidStarknetAddress(trimmed)) {
+    if (!isValidStarknetAddress(trimmedAddr)) {
       setError('Invalid address — must start with 0x')
       return
     }
+    if (trimmedUser && !isValidUsername(trimmedUser)) {
+      setError('Username may only contain letters, numbers, and underscores (max 30 chars)')
+      return
+    }
     setError('')
-    const params = message.trim()
-      ? `?msg=${encodeURIComponent(message.trim())}`
-      : ''
-    setLink(`${window.location.origin}/pay/${trimmed}${params}`)
+
+    if (trimmedUser) {
+      setSaving(true)
+      const { error: saveError } = await saveUsername({
+        username: trimmedUser,
+        address: trimmedAddr,
+        message: message.trim(),
+      })
+      setSaving(false)
+      if (saveError) {
+        setError(`Could not save username: ${saveError}`)
+        return
+      }
+    }
+
+    const slug = trimmedUser ? `@${trimmedUser}` : trimmedAddr
+    const params = new URLSearchParams()
+    if (!trimmedUser && message.trim()) params.set('msg', message.trim())
+    const queryString = params.toString() ? `?${params.toString()}` : ''
+    setLink(`${window.location.origin}/pay/${slug}${queryString}`)
   }
 
   const copyLink = async () => {
@@ -51,12 +80,36 @@ export default function Home() {
           </h1>
           <p className="text-slate-400 text-sm leading-relaxed">
             Generate a link. Share it anywhere. Your supporters send STRK, USDC, or ETH
-            in seconds , signed in with Google, zero gas required.
+            in seconds — signed in with Google, zero gas required.
           </p>
         </div>
 
         {/* Form card */}
         <div className="bg-slate-900 rounded-2xl border border-slate-800 p-6 space-y-4">
+
+          {/* Username */}
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-slate-300">
+              Username{' '}
+              <span className="text-slate-500 font-normal">(optional)</span>
+            </label>
+            <div className="relative">
+              <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 text-sm select-none">@</span>
+              <input
+                type="text"
+                value={username}
+                onChange={(e) => { setUsername(e.target.value.replace(/^@/, '')); setError('') }}
+                placeholder="alice"
+                maxLength={30}
+                className="w-full bg-slate-800 border border-slate-700 rounded-xl pl-8 pr-4 py-3 text-white placeholder-slate-500 text-sm focus:border-violet-500 transition-colors"
+              />
+            </div>
+            <p className="text-slate-600 text-xs">
+              Creates a clean link like <span className="text-slate-500 font-mono">/pay/@alice</span> instead of a raw address
+            </p>
+          </div>
+
+          {/* Address */}
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-slate-300">
               Your Starknet address
@@ -70,6 +123,7 @@ export default function Home() {
             />
           </div>
 
+          {/* Message */}
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-slate-300">
               Message{' '}
@@ -94,9 +148,10 @@ export default function Home() {
 
           <button
             onClick={generateLink}
-            className="w-full bg-violet-600 hover:bg-violet-500 active:bg-violet-700 text-white font-semibold rounded-xl py-3 transition-colors"
+            disabled={saving}
+            className="w-full bg-violet-600 hover:bg-violet-500 active:bg-violet-700 disabled:opacity-60 text-white font-semibold rounded-xl py-3 transition-colors"
           >
-            Generate tip link
+            {saving ? 'Saving…' : 'Generate tip link'}
           </button>
         </div>
 
@@ -107,6 +162,13 @@ export default function Home() {
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
               <span className="text-sm font-medium text-emerald-400">Your link is ready</span>
             </div>
+
+            {username.trim() && (
+              <div className="flex items-center gap-2 bg-violet-500/10 border border-violet-500/20 rounded-xl px-4 py-2.5">
+                <span className="text-violet-300 text-sm font-semibold">@{username.trim().replace(/^@/, '')}</span>
+                <span className="text-slate-500 text-xs ml-auto font-mono truncate">{address.slice(0, 10)}…{address.slice(-6)}</span>
+              </div>
+            )}
 
             <div className="bg-slate-800/80 rounded-xl px-4 py-3 text-slate-300 text-xs break-all font-mono leading-relaxed border border-slate-700/50">
               {link}

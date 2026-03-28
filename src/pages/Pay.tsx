@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef } from 'react'
-import { useParams, useSearchParams, useNavigate } from 'react-router-dom'
+import { useParams, useSearchParams, useNavigate, useLocation } from 'react-router-dom'
 import { usePrivy, useWallets } from '@privy-io/react-auth'
 import { RpcProvider, CallData, uint256, ec } from 'starknet'
 import { StarkSigner, ArgentXV050Preset } from 'starkzap'
 import Layout from '../components/Layout'
 import { TOKENS, Token, parseAmount, formatAmount } from '../lib/tokens'
 import { sdk, RPC_URL } from '../lib/sdk'
+import { resolveUsername, type UsernameRecord } from '../lib/supabase'
 
 // Derivation message — changing this would create a different Starknet key
 const DERIVATION_MSG = 'starkzappypay: authorize my Starknet wallet'
@@ -32,10 +33,36 @@ type WalletState =
   | { status: 'connected'; szWallet: Awaited<ReturnType<typeof sdk.connectWallet>>; address: string }
 
 export default function Pay() {
-  const { address: recipientAddress } = useParams<{ address: string }>()
+  const { identifier } = useParams<{ identifier: string }>()
   const [searchParams] = useSearchParams()
-  const tipMessage = searchParams.get('msg') ?? ''
   const navigate = useNavigate()
+  useLocation() // keep router context fresh
+
+  const isUsernameLink = identifier?.startsWith('@')
+  const displayName = isUsernameLink ? identifier!.slice(1) : null
+
+  // For raw address links, resolve immediately from params
+  const [resolved, setResolved] = useState<UsernameRecord | null>(
+    !isUsernameLink ? { username: '', address: identifier ?? '', message: searchParams.get('msg') ?? '' } : null
+  )
+  const [resolving, setResolving] = useState(isUsernameLink ?? false)
+  const [notFound, setNotFound] = useState(false)
+
+  useEffect(() => {
+    if (!isUsernameLink || !displayName) return
+    setResolving(true)
+    resolveUsername(displayName).then((record) => {
+      if (record) {
+        setResolved(record)
+      } else {
+        setNotFound(true)
+      }
+      setResolving(false)
+    })
+  }, [isUsernameLink, displayName])
+
+  const recipientAddress = resolved?.address ?? ''
+  const tipMessage = resolved?.message ?? ''
 
   const { login, authenticated, ready, logout } = usePrivy()
   const { wallets } = useWallets()
@@ -236,12 +263,28 @@ export default function Pay() {
     return 'Connecting...'
   }
 
-  if (!ready) {
+  if (!ready || resolving) {
     return (
       <Layout>
         <div className="flex items-center gap-2 text-slate-500 mt-20">
           <Spinner />
-          <span className="text-sm">Loading...</span>
+          <span className="text-sm">{resolving ? 'Looking up username…' : 'Loading…'}</span>
+        </div>
+      </Layout>
+    )
+  }
+
+  if (notFound) {
+    return (
+      <Layout>
+        <div className="w-full max-w-md">
+          <div className="bg-slate-900 rounded-2xl border border-slate-800 p-8 text-center space-y-3">
+            <p className="text-4xl">🔍</p>
+            <p className="text-white font-semibold text-lg">@{displayName} not found</p>
+            <p className="text-slate-400 text-sm">
+              This username hasn't been registered yet.
+            </p>
+          </div>
         </div>
       </Layout>
     )
@@ -256,10 +299,19 @@ export default function Pay() {
           <div className="w-16 h-16 rounded-full bg-gradient-to-br from-violet-500/30 to-violet-700/10 border border-violet-500/30 flex items-center justify-center mx-auto text-3xl">
             ⚡
           </div>
-          <div>
-            <p className="text-slate-400 text-xs font-mono">
-              {truncateAddress(recipientAddress ?? '')}
-            </p>
+          <div className="space-y-1">
+            {displayName ? (
+              <>
+                <p className="text-white font-bold text-xl">@{displayName}</p>
+                <p className="text-slate-500 text-xs font-mono">
+                  {truncateAddress(recipientAddress)}
+                </p>
+              </>
+            ) : (
+              <p className="text-slate-400 text-xs font-mono">
+                {truncateAddress(recipientAddress ?? '')}
+              </p>
+            )}
             {tipMessage && (
               <p className="text-white font-semibold text-lg mt-1.5">"{tipMessage}"</p>
             )}
