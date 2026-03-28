@@ -128,7 +128,7 @@ export default function Home() {
           </h1>
           <p className="text-slate-400 text-sm leading-relaxed">
             Generate a link. Share it anywhere. Your supporters send STRK, USDC,
-            or ETH in seconds — signed in with Google, zero gas required.
+            or ETH in seconds — signed in with Email or Farcaster, zero gas required.
           </p>
         </div>
 

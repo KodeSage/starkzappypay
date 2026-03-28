@@ -6,7 +6,7 @@
 
 > Gasless crypto tip links on Starknet. No wallet setup. No gas fees. Just a link.
 
-**starkzappypay** lets anyone create a shareable payment link and receive STRK, USDC, or ETH from anyone — using only a social login (Google, email, Twitter). Built on Starknet using the [Starkzap SDK](https://docs.starknet.io/build/starkzap/overview).
+**starkzappypay** lets anyone create a shareable payment link and receive STRK, USDC, or ETH from anyone — using only a social login (Email, Farcaster). Built on Starknet using the [Starkzap SDK](https://docs.starknet.io/build/starkzap/overview).
 
 ---
 
