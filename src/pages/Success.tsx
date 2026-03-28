@@ -7,6 +7,7 @@ export default function Success() {
   const [searchParams] = useSearchParams()
   const token = searchParams.get('token') ?? 'STRK'
   const amount = searchParams.get('amount') ?? ''
+  const recipient = searchParams.get('recipient') ?? ''
 
   const shortHash = txHash
     ? `${txHash.slice(0, 10)}...${txHash.slice(-8)}`
@@ -27,39 +28,32 @@ export default function Success() {
                 stroke="currentColor"
                 strokeWidth={2.5}
               >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M5 13l4 4L19 7"
-                />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
               </svg>
             </div>
           </div>
 
           <div className="space-y-1">
             <h1 className="text-2xl font-bold text-white">
-              {amount ? `${amount} ${token} sent!` : "Tip sent!"}
+              {amount ? `${amount} ${token} sent!` : 'Tip sent!'}
             </h1>
             <p className="text-slate-400 text-sm">
-              Transaction confirmed on Starknet mainnet
+              {recipient
+                ? `You just supported @${recipient} on Starknet`
+                : 'Transaction confirmed on Starknet mainnet'}
             </p>
           </div>
 
           {/* Gas callout */}
           <div className="bg-violet-500/10 border border-violet-500/20 rounded-xl px-4 py-3 text-violet-300 text-sm">
-            ⛽ You paid <strong>zero gas fees</strong> — sponsored by AVNU
-            Paymaster
+            ⛽ You paid <strong>zero gas fees</strong> — sponsored by AVNU Paymaster
           </div>
 
           {/* Tx hash */}
           {txHash && (
             <div className="bg-slate-800 rounded-xl p-4 space-y-2 text-left">
-              <p className="text-slate-500 text-xs uppercase tracking-wider">
-                Transaction
-              </p>
-              <p className="text-slate-300 text-xs font-mono break-all">
-                {shortHash}
-              </p>
+              <p className="text-slate-500 text-xs uppercase tracking-wider">Transaction</p>
+              <p className="text-slate-300 text-xs font-mono break-all">{shortHash}</p>
               <a
                 href={`${VOYAGER_TX_URL}${txHash}`}
                 target="_blank"
@@ -67,12 +61,7 @@ export default function Success() {
                 className="inline-flex items-center gap-1 text-xs text-violet-400 hover:text-violet-300 transition-colors"
               >
                 View on Voyager
-                <svg
-                  className="w-3 h-3"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path
                     strokeLinecap="round"
                     strokeLinejoin="round"
@@ -85,8 +74,16 @@ export default function Success() {
           )}
         </div>
 
-        {/* CTA */}
+        {/* CTAs */}
         <div className="space-y-3">
+          {recipient && (
+            <Link
+              to={`/pay/@${recipient}`}
+              className="block w-full bg-slate-800 hover:bg-slate-700 text-white font-medium rounded-xl py-3 text-center transition-colors text-sm border border-slate-700"
+            >
+              Back to @{recipient}'s page
+            </Link>
+          )}
           <Link
             to="/"
             className="block w-full bg-violet-600 hover:bg-violet-500 text-white font-semibold rounded-xl py-3.5 text-center transition-colors"
@@ -95,7 +92,7 @@ export default function Success() {
           </Link>
 
           <p className="text-center text-slate-500 text-xs">
-            Built with{" "}
+            Built with{' '}
             <a
               href="https://docs.starknet.io/build/starkzap/overview"
               target="_blank"
@@ -103,11 +100,11 @@ export default function Success() {
               className="text-violet-400 hover:text-violet-300 transition-colors"
             >
               Starkzap SDK
-            </a>{" "}
+            </a>{' '}
             · Open source on GitHub
           </p>
         </div>
       </div>
     </Layout>
-  );
+  )
 }

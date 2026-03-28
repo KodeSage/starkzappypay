@@ -9,6 +9,20 @@ export interface UsernameRecord {
   username: string
   address: string
   message: string
+  preferred_token?: string
+  goal_amount?: number | null
+  goal_label?: string
+}
+
+export interface TipRecord {
+  id?: string
+  recipient_username: string
+  tipper_name: string
+  tipper_message: string
+  amount: string
+  token: string
+  tx_hash: string
+  created_at?: string
 }
 
 export type ValidationResult =
@@ -22,7 +36,6 @@ export async function validateUsernameAndAddress(
   const lowerUsername = username.toLowerCase()
   const lowerAddress = address.toLowerCase()
 
-  // Check if username already exists
   const { data: byUsername } = await supabase
     .from('usernames')
     .select('username, address')
@@ -31,14 +44,11 @@ export async function validateUsernameAndAddress(
 
   if (byUsername) {
     if (byUsername.address.toLowerCase() !== lowerAddress) {
-      // Username taken by a different address — surface the existing link
       return { ok: false, existingUsername: byUsername.username, reason: 'username_taken' }
     }
-    // Same username + same address — returning user
     return { ok: true, isNew: false }
   }
 
-  // Username is free — check if address is already tied to another username
   const { data: byAddress } = await supabase
     .from('usernames')
     .select('username')
@@ -62,7 +72,7 @@ export async function saveUsername(record: UsernameRecord): Promise<{ error: str
 export async function resolveUsername(username: string): Promise<UsernameRecord | null> {
   const { data, error } = await supabase
     .from('usernames')
-    .select('username, address, message')
+    .select('username, address, message, preferred_token, goal_amount, goal_label')
     .eq('username', username.toLowerCase())
     .single()
   if (error || !data) return null
@@ -72,9 +82,36 @@ export async function resolveUsername(username: string): Promise<UsernameRecord 
 export async function resolveAddress(address: string): Promise<UsernameRecord | null> {
   const { data, error } = await supabase
     .from('usernames')
-    .select('username, address, message')
+    .select('username, address, message, preferred_token, goal_amount, goal_label')
     .eq('address', address)
     .single()
   if (error || !data) return null
   return data as UsernameRecord
+}
+
+export async function logTip(tip: Omit<TipRecord, 'id' | 'created_at'>): Promise<void> {
+  await supabase.from('tips').insert(tip)
+}
+
+export async function getTips(recipient_username: string): Promise<TipRecord[]> {
+  const { data } = await supabase
+    .from('tips')
+    .select('*')
+    .eq('recipient_username', recipient_username.toLowerCase())
+    .order('created_at', { ascending: false })
+    .limit(10)
+  return (data as TipRecord[]) ?? []
+}
+
+export async function getGoalProgress(
+  recipient_username: string,
+  preferred_token: string
+): Promise<number> {
+  const { data } = await supabase
+    .from('tips')
+    .select('amount')
+    .eq('recipient_username', recipient_username.toLowerCase())
+    .eq('token', preferred_token)
+  if (!data) return 0
+  return data.reduce((sum, row) => sum + parseFloat(row.amount || '0'), 0)
 }
