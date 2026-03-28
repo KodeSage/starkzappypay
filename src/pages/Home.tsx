@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import Layout from '../components/Layout'
-import { saveUsername } from '../lib/supabase'
+import { saveUsername, validateUsernameAndAddress } from '../lib/supabase'
 
 function isValidStarknetAddress(addr: string): boolean {
   return /^0x[0-9a-fA-F]{1,64}$/.test(addr.trim())
@@ -18,6 +18,7 @@ export default function Home() {
   const [copied, setCopied] = useState(false)
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
+  const [isUpdate, setIsUpdate] = useState(false)
 
   const generateLink = async () => {
     const trimmedAddr = address.trim()
@@ -41,18 +42,25 @@ export default function Home() {
     }
     setError('')
 
-    if (trimmedUser) {
-      setSaving(true)
-      const { error: saveError } = await saveUsername({
-        username: trimmedUser,
-        address: trimmedAddr,
-        message: message.trim(),
-      })
+    setSaving(true)
+
+    const validation = await validateUsernameAndAddress(trimmedUser, trimmedAddr)
+    if (!validation.ok) {
       setSaving(false)
-      if (saveError) {
-        setError(`Could not save username: ${saveError}`)
-        return
-      }
+      setError(validation.error)
+      return
+    }
+    setIsUpdate(validation.isUpdate)
+
+    const { error: saveError } = await saveUsername({
+      username: trimmedUser,
+      address: trimmedAddr,
+      message: message.trim(),
+    })
+    setSaving(false)
+    if (saveError) {
+      setError(`Could not save: ${saveError}`)
+      return
     }
 
     setLink(`${window.location.origin}/pay/@${trimmedUser}`)
@@ -160,7 +168,7 @@ export default function Home() {
             disabled={saving}
             className="w-full bg-violet-600 hover:bg-violet-500 active:bg-violet-700 disabled:opacity-60 text-white font-semibold rounded-xl py-3 transition-colors"
           >
-            {saving ? "Saving…" : "Generate tip link"}
+            {saving ? 'Checking…' : 'Generate tip link'}
           </button>
         </div>
 
@@ -170,8 +178,13 @@ export default function Home() {
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
               <span className="text-sm font-medium text-emerald-400">
-                Your link is ready
+                {isUpdate ? 'Link updated' : 'Your link is ready'}
               </span>
+              {isUpdate && (
+                <span className="ml-auto text-xs text-slate-500 bg-slate-800 border border-slate-700 px-2 py-0.5 rounded-full">
+                  updated
+                </span>
+              )}
             </div>
 
             <div className="flex items-center gap-2 bg-violet-500/10 border border-violet-500/20 rounded-xl px-4 py-2.5">
