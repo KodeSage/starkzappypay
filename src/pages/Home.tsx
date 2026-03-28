@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Layout from '../components/Layout'
-import { saveUsername, validateUsernameAndAddress } from '../lib/supabase'
+import { saveUsername, validateUsernameAndAddress, resolveUsername, resolveAddress } from '../lib/supabase'
 
 function isValidStarknetAddress(addr: string): boolean {
   return /^0x[0-9a-fA-F]{1,64}$/.test(addr.trim())
@@ -18,7 +18,45 @@ export default function Home() {
   const [copied, setCopied] = useState(false)
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
-  const [isUpdate, setIsUpdate] = useState(false)
+  const [linkStatus, setLinkStatus] = useState<'new' | 'updated' | 'exists'>('new')
+
+  // Real-time lookup: check username as user types
+  useEffect(() => {
+    const trimmed = username.trim().replace(/^@/, '')
+    if (!isValidUsername(trimmed)) {
+      setLink('')
+      return
+    }
+    const timer = setTimeout(async () => {
+      const record = await resolveUsername(trimmed)
+      if (record) {
+        setLinkStatus('exists')
+        setLink(`${window.location.origin}/pay/@${record.username}`)
+      } else {
+        setLink('')
+      }
+    }, 400)
+    return () => clearTimeout(timer)
+  }, [username])
+
+  // Real-time lookup: check address as user types
+  useEffect(() => {
+    const trimmed = address.trim()
+    if (!isValidStarknetAddress(trimmed)) {
+      if (!username.trim()) setLink('')
+      return
+    }
+    const timer = setTimeout(async () => {
+      const record = await resolveAddress(trimmed)
+      if (record) {
+        setLinkStatus('exists')
+        setLink(`${window.location.origin}/pay/@${record.username}`)
+      } else if (!username.trim()) {
+        setLink('')
+      }
+    }, 400)
+    return () => clearTimeout(timer)
+  }, [address, username])
 
   const generateLink = async () => {
     const trimmedAddr = address.trim()
@@ -41,16 +79,17 @@ export default function Home() {
       return
     }
     setError('')
-
     setSaving(true)
 
     const validation = await validateUsernameAndAddress(trimmedUser, trimmedAddr)
+
     if (!validation.ok) {
+      // Username or address already exists — show the existing link instead of erroring
       setSaving(false)
-      setError(validation.error)
+      setLinkStatus('exists')
+      setLink(`${window.location.origin}/pay/@${validation.existingUsername}`)
       return
     }
-    setIsUpdate(validation.isUpdate)
 
     const { error: saveError } = await saveUsername({
       username: trimmedUser,
@@ -63,6 +102,7 @@ export default function Home() {
       return
     }
 
+    setLinkStatus(validation.isNew ? 'new' : 'updated')
     setLink(`${window.location.origin}/pay/@${trimmedUser}`)
   }
 
@@ -176,13 +216,13 @@ export default function Home() {
         {link && (
           <div className="bg-slate-900 rounded-2xl border border-violet-500/30 p-5 space-y-3">
             <div className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-              <span className="text-sm font-medium text-emerald-400">
-                {isUpdate ? 'Link updated' : 'Your link is ready'}
+              <span className={`w-2 h-2 rounded-full animate-pulse ${linkStatus === 'exists' ? 'bg-amber-400' : 'bg-emerald-400'}`} />
+              <span className={`text-sm font-medium ${linkStatus === 'exists' ? 'text-amber-400' : 'text-emerald-400'}`}>
+                {linkStatus === 'exists' ? 'Link exists' : linkStatus === 'updated' ? 'Link updated' : 'Your link is ready'}
               </span>
-              {isUpdate && (
+              {linkStatus !== 'new' && (
                 <span className="ml-auto text-xs text-slate-500 bg-slate-800 border border-slate-700 px-2 py-0.5 rounded-full">
-                  updated
+                  {linkStatus}
                 </span>
               )}
             </div>

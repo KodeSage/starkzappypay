@@ -12,8 +12,8 @@ export interface UsernameRecord {
 }
 
 export type ValidationResult =
-  | { ok: true; isUpdate: boolean }
-  | { ok: false; error: string }
+  | { ok: true; isNew: boolean }
+  | { ok: false; existingUsername: string; reason: string }
 
 export async function validateUsernameAndAddress(
   username: string,
@@ -22,7 +22,7 @@ export async function validateUsernameAndAddress(
   const lowerUsername = username.toLowerCase()
   const lowerAddress = address.toLowerCase()
 
-  // Check if username already exists in db
+  // Check if username already exists
   const { data: byUsername } = await supabase
     .from('usernames')
     .select('username, address')
@@ -31,13 +31,14 @@ export async function validateUsernameAndAddress(
 
   if (byUsername) {
     if (byUsername.address.toLowerCase() !== lowerAddress) {
-      return { ok: false, error: `@${username} is already taken by a different address.` }
+      // Username taken by a different address — surface the existing link
+      return { ok: false, existingUsername: byUsername.username, reason: 'username_taken' }
     }
-    // Same username + same address → they're updating their own record
-    return { ok: true, isUpdate: true }
+    // Same username + same address — returning user
+    return { ok: true, isNew: false }
   }
 
-  // Username is free — check if this address is already tied to another username
+  // Username is free — check if address is already tied to another username
   const { data: byAddress } = await supabase
     .from('usernames')
     .select('username')
@@ -45,13 +46,10 @@ export async function validateUsernameAndAddress(
     .maybeSingle()
 
   if (byAddress) {
-    return {
-      ok: false,
-      error: `This address is already registered as @${byAddress.username}. Use that username or a different address.`,
-    }
+    return { ok: false, existingUsername: byAddress.username, reason: 'address_taken' }
   }
 
-  return { ok: true, isUpdate: false }
+  return { ok: true, isNew: true }
 }
 
 export async function saveUsername(record: UsernameRecord): Promise<{ error: string | null }> {
@@ -66,6 +64,16 @@ export async function resolveUsername(username: string): Promise<UsernameRecord 
     .from('usernames')
     .select('username, address, message')
     .eq('username', username.toLowerCase())
+    .single()
+  if (error || !data) return null
+  return data as UsernameRecord
+}
+
+export async function resolveAddress(address: string): Promise<UsernameRecord | null> {
+  const { data, error } = await supabase
+    .from('usernames')
+    .select('username, address, message')
+    .eq('address', address)
     .single()
   if (error || !data) return null
   return data as UsernameRecord
