@@ -85,7 +85,12 @@ export default function Pay() {
   useEffect(() => {
     if (!pendingConnectRef.current) return
     if (!authenticated || !wallets.length) return
-    if (walletState.status === 'connecting' || walletState.status === 'connected') return
+    if (walletState.status === 'connected') return
+    // Already past login — don't re-trigger derivation
+    if (walletState.status === 'connecting') {
+      const { step } = walletState as Extract<WalletState, { status: 'connecting' }>
+      if (step === 'deriving' || step === 'deploying') return
+    }
 
     pendingConnectRef.current = false
     deriveAndConnect()
@@ -434,7 +439,7 @@ export default function Pay() {
                 <div className="flex gap-2 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2.5">
                   <span className="text-amber-400 flex-shrink-0 mt-0.5">ℹ</span>
                   <p className="text-amber-300/80 text-xs leading-relaxed">
-                    <span className="font-semibold text-amber-300">Note:</span> This is your Starkzap wallet address. To tip someone, send STRK, USDC, or ETH to this address from your main Starknet wallet first.
+                    <span className="font-semibold text-amber-300">Note:</span> This is your starkzappypay wallet address. To tip someone, send STRK, USDC, or ETH to this address from your main Starknet wallet first.
                   </p>
                 </div>
               </div>

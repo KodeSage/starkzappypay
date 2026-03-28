@@ -31,7 +31,11 @@ export default function Home() {
       setError('Invalid address — must start with 0x')
       return
     }
-    if (trimmedUser && !isValidUsername(trimmedUser)) {
+    if (!trimmedUser) {
+      setError('Username is required')
+      return
+    }
+    if (!isValidUsername(trimmedUser)) {
       setError('Username may only contain letters, numbers, and underscores (max 30 chars)')
       return
     }
@@ -51,11 +55,7 @@ export default function Home() {
       }
     }
 
-    const slug = trimmedUser ? `@${trimmedUser}` : trimmedAddr
-    const params = new URLSearchParams()
-    if (!trimmedUser && message.trim()) params.set('msg', message.trim())
-    const queryString = params.toString() ? `?${params.toString()}` : ''
-    setLink(`${window.location.origin}/pay/${slug}${queryString}`)
+    setLink(`${window.location.origin}/pay/@${trimmedUser}`)
   }
 
   const copyLink = async () => {
@@ -67,7 +67,6 @@ export default function Home() {
   return (
     <Layout>
       <div className="w-full max-w-md space-y-6">
-
         {/* Hero */}
         <div className="text-center space-y-3 pt-2">
           <div className="inline-flex items-center gap-2 bg-violet-500/10 border border-violet-500/20 text-violet-400 text-xs font-medium px-3 py-1.5 rounded-full">
@@ -75,37 +74,42 @@ export default function Home() {
             Zero gas fees · Instant · No wallet setup
           </div>
           <h1 className="text-3xl font-bold text-white leading-tight">
-            Get tipped in crypto.<br />
+            Get tipped in crypto.
+            <br />
             <span className="text-violet-400">No friction.</span>
           </h1>
           <p className="text-slate-400 text-sm leading-relaxed">
-            Generate a link. Share it anywhere. Your supporters send STRK, USDC, or ETH
-            in seconds — signed in with Google, zero gas required.
+            Generate a link. Share it anywhere. Your supporters send STRK, USDC,
+            or ETH in seconds — signed in with Google, zero gas required.
           </p>
         </div>
 
         {/* Form card */}
         <div className="bg-slate-900 rounded-2xl border border-slate-800 p-6 space-y-4">
-
           {/* Username */}
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-slate-300">
-              Username{' '}
-              <span className="text-slate-500 font-normal">(optional)</span>
+              Username
             </label>
             <div className="relative">
-              <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 text-sm select-none">@</span>
+              <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 text-sm select-none">
+                @
+              </span>
               <input
                 type="text"
                 value={username}
-                onChange={(e) => { setUsername(e.target.value.replace(/^@/, '')); setError('') }}
+                onChange={(e) => {
+                  setUsername(e.target.value.replace(/^@/, ""));
+                  setError("");
+                }}
                 placeholder="alice"
                 maxLength={30}
                 className="w-full bg-slate-800 border border-slate-700 rounded-xl pl-8 pr-4 py-3 text-white placeholder-slate-500 text-sm focus:border-violet-500 transition-colors"
               />
             </div>
             <p className="text-slate-600 text-xs">
-              Creates a clean link like <span className="text-slate-500 font-mono">/pay/@alice</span> instead of a raw address
+              Creates a clean link like{" "}
+              <span className="text-slate-500 font-mono">/pay/@{username}</span>
             </p>
           </div>
 
@@ -117,7 +121,10 @@ export default function Home() {
             <input
               type="text"
               value={address}
-              onChange={(e) => { setAddress(e.target.value); setError('') }}
+              onChange={(e) => {
+                setAddress(e.target.value);
+                setError("");
+              }}
               placeholder="0x..."
               className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-500 text-sm font-mono focus:border-violet-500 transition-colors"
             />
@@ -126,7 +133,7 @@ export default function Home() {
           {/* Message */}
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-slate-300">
-              Message{' '}
+              Message{" "}
               <span className="text-slate-500 font-normal">(optional)</span>
             </label>
             <input
@@ -137,7 +144,9 @@ export default function Home() {
               maxLength={60}
               className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-500 text-sm focus:border-violet-500 transition-colors"
             />
-            <p className="text-slate-600 text-xs text-right">{message.length}/60</p>
+            <p className="text-slate-600 text-xs text-right">
+              {message.length}/60
+            </p>
           </div>
 
           {error && (
@@ -151,7 +160,7 @@ export default function Home() {
             disabled={saving}
             className="w-full bg-violet-600 hover:bg-violet-500 active:bg-violet-700 disabled:opacity-60 text-white font-semibold rounded-xl py-3 transition-colors"
           >
-            {saving ? 'Saving…' : 'Generate tip link'}
+            {saving ? "Saving…" : "Generate tip link"}
           </button>
         </div>
 
@@ -160,15 +169,19 @@ export default function Home() {
           <div className="bg-slate-900 rounded-2xl border border-violet-500/30 p-5 space-y-3">
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-              <span className="text-sm font-medium text-emerald-400">Your link is ready</span>
+              <span className="text-sm font-medium text-emerald-400">
+                Your link is ready
+              </span>
             </div>
 
-            {username.trim() && (
-              <div className="flex items-center gap-2 bg-violet-500/10 border border-violet-500/20 rounded-xl px-4 py-2.5">
-                <span className="text-violet-300 text-sm font-semibold">@{username.trim().replace(/^@/, '')}</span>
-                <span className="text-slate-500 text-xs ml-auto font-mono truncate">{address.slice(0, 10)}…{address.slice(-6)}</span>
-              </div>
-            )}
+            <div className="flex items-center gap-2 bg-violet-500/10 border border-violet-500/20 rounded-xl px-4 py-2.5">
+              <span className="text-violet-300 text-sm font-semibold">
+                @{username.trim().replace(/^@/, "")}
+              </span>
+              <span className="text-slate-500 text-xs ml-auto font-mono truncate">
+                {address.slice(0, 10)}…{address.slice(-6)}
+              </span>
+            </div>
 
             <div className="bg-slate-800/80 rounded-xl px-4 py-3 text-slate-300 text-xs break-all font-mono leading-relaxed border border-slate-700/50">
               {link}
@@ -178,7 +191,7 @@ export default function Home() {
               onClick={copyLink}
               className="w-full bg-slate-800 hover:bg-slate-700 active:bg-slate-600 text-white font-medium rounded-xl py-2.5 transition-colors text-sm border border-slate-700"
             >
-              {copied ? '✓ Copied to clipboard' : 'Copy link'}
+              {copied ? "✓ Copied to clipboard" : "Copy link"}
             </button>
 
             <p className="text-slate-500 text-xs text-center">
@@ -190,9 +203,17 @@ export default function Home() {
         {/* Feature pills */}
         <div className="grid grid-cols-3 gap-2.5">
           {[
-            { icon: '⛽', label: 'Gas-free', desc: 'AVNU Paymaster covers fees' },
-            { icon: '🔐', label: 'Seedless', desc: 'Sign in with Google or email' },
-            { icon: '⚡', label: 'Instant', desc: 'Confirmed in seconds' },
+            {
+              icon: "⛽",
+              label: "Gas-free",
+              desc: "AVNU Paymaster covers fees",
+            },
+            {
+              icon: "🔐",
+              label: "Seedless",
+              desc: "Sign in with Google or email",
+            },
+            { icon: "⚡", label: "Instant", desc: "Confirmed in seconds" },
           ].map((f) => (
             <div
               key={f.label}
@@ -200,12 +221,13 @@ export default function Home() {
             >
               <div className="text-xl">{f.icon}</div>
               <div className="text-white text-xs font-semibold">{f.label}</div>
-              <div className="text-slate-500 text-xs leading-tight">{f.desc}</div>
+              <div className="text-slate-500 text-xs leading-tight">
+                {f.desc}
+              </div>
             </div>
           ))}
         </div>
-
       </div>
     </Layout>
-  )
+  );
 }
