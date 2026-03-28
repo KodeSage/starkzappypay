@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import Layout from '../components/Layout'
 import { saveUsername, validateUsernameAndAddress, resolveUsername, resolveAddress } from '../lib/supabase'
+import { TOKENS } from '../lib/tokens'
 
 function isValidStarknetAddress(addr: string): boolean {
   return /^0x[0-9a-fA-F]{1,64}$/.test(addr.trim())
@@ -14,6 +15,9 @@ export default function Home() {
   const [address, setAddress] = useState('')
   const [username, setUsername] = useState('')
   const [message, setMessage] = useState('')
+  const [preferredToken, setPreferredToken] = useState('STRK')
+  const [goalLabel, setGoalLabel] = useState('')
+  const [goalAmount, setGoalAmount] = useState('')
   const [link, setLink] = useState('')
   const [copied, setCopied] = useState(false)
   const [error, setError] = useState('')
@@ -78,13 +82,16 @@ export default function Home() {
       setError('Username may only contain letters, numbers, and underscores (max 30 chars)')
       return
     }
+    if (goalAmount && (isNaN(Number(goalAmount)) || Number(goalAmount) <= 0)) {
+      setError('Goal amount must be a positive number')
+      return
+    }
     setError('')
     setSaving(true)
 
     const validation = await validateUsernameAndAddress(trimmedUser, trimmedAddr)
 
     if (!validation.ok) {
-      // Username or address already exists — show the existing link instead of erroring
       setSaving(false)
       setLinkStatus('exists')
       setLink(`${window.location.origin}/pay/@${validation.existingUsername}`)
@@ -95,6 +102,9 @@ export default function Home() {
       username: trimmedUser,
       address: trimmedAddr,
       message: message.trim(),
+      preferred_token: preferredToken,
+      goal_amount: goalAmount ? Number(goalAmount) : null,
+      goal_label: goalLabel.trim(),
     })
     setSaving(false)
     if (saveError) {
@@ -136,9 +146,7 @@ export default function Home() {
         <div className="bg-slate-900 rounded-2xl border border-slate-800 p-6 space-y-4">
           {/* Username */}
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-slate-300">
-              Username
-            </label>
+            <label className="text-sm font-medium text-slate-300">Username</label>
             <div className="relative">
               <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 text-sm select-none">
                 @
@@ -147,8 +155,8 @@ export default function Home() {
                 type="text"
                 value={username}
                 onChange={(e) => {
-                  setUsername(e.target.value.replace(/^@/, ""));
-                  setError("");
+                  setUsername(e.target.value.replace(/^@/, ''))
+                  setError('')
                 }}
                 placeholder="alice"
                 maxLength={30}
@@ -156,22 +164,20 @@ export default function Home() {
               />
             </div>
             <p className="text-slate-600 text-xs">
-              Creates a clean link like{" "}
-              <span className="text-slate-500 font-mono">/pay/@{username}</span>
+              Creates a clean link like{' '}
+              <span className="text-slate-500 font-mono">/pay/@{username || 'you'}</span>
             </p>
           </div>
 
           {/* Address */}
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-slate-300">
-              Your Starknet address
-            </label>
+            <label className="text-sm font-medium text-slate-300">Your Starknet address</label>
             <input
               type="text"
               value={address}
               onChange={(e) => {
-                setAddress(e.target.value);
-                setError("");
+                setAddress(e.target.value)
+                setError('')
               }}
               placeholder="0x..."
               className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-500 text-sm font-mono focus:border-violet-500 transition-colors"
@@ -181,8 +187,7 @@ export default function Home() {
           {/* Message */}
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-slate-300">
-              Message{" "}
-              <span className="text-slate-500 font-normal">(optional)</span>
+              Message <span className="text-slate-500 font-normal">(optional)</span>
             </label>
             <input
               type="text"
@@ -192,9 +197,64 @@ export default function Home() {
               maxLength={60}
               className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-500 text-sm focus:border-violet-500 transition-colors"
             />
-            <p className="text-slate-600 text-xs text-right">
-              {message.length}/60
+            <p className="text-slate-600 text-xs text-right">{message.length}/60</p>
+          </div>
+
+          {/* Preferred receive token */}
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-slate-300">
+              Preferred receive token
+            </label>
+            <p className="text-slate-600 text-xs -mt-0.5">
+              Supporters can send any token — we auto-swap it to this one for you
             </p>
+            <div className="grid grid-cols-3 gap-2">
+              {TOKENS.map((token) => (
+                <button
+                  key={token.symbol}
+                  type="button"
+                  onClick={() => setPreferredToken(token.symbol)}
+                  className={`flex flex-col items-center gap-1 py-2.5 rounded-xl border transition-all text-sm font-medium ${
+                    preferredToken === token.symbol
+                      ? 'border-violet-500 bg-violet-500/10 text-white'
+                      : 'border-slate-700 bg-slate-800/60 text-slate-400 hover:border-slate-600'
+                  }`}
+                >
+                  <span className="text-base">{token.icon}</span>
+                  <span className="text-xs">{token.symbol}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Tip goal (optional) */}
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-slate-300">
+              Tip goal <span className="text-slate-500 font-normal">(optional)</span>
+            </label>
+            <p className="text-slate-600 text-xs -mt-0.5">
+              Show supporters what you're saving for and track progress
+            </p>
+            <input
+              type="text"
+              value={goalLabel}
+              onChange={(e) => setGoalLabel(e.target.value)}
+              placeholder="New microphone"
+              maxLength={50}
+              className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-500 text-sm focus:border-violet-500 transition-colors"
+            />
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                value={goalAmount}
+                onChange={(e) => { setGoalAmount(e.target.value); setError('') }}
+                placeholder="100"
+                min="0"
+                step="any"
+                className="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-500 text-sm focus:border-violet-500 transition-colors"
+              />
+              <span className="text-slate-400 text-sm font-medium w-12 text-center">{preferredToken}</span>
+            </div>
           </div>
 
           {error && (
@@ -216,9 +276,21 @@ export default function Home() {
         {link && (
           <div className="bg-slate-900 rounded-2xl border border-violet-500/30 p-5 space-y-3">
             <div className="flex items-center gap-2">
-              <span className={`w-2 h-2 rounded-full animate-pulse ${linkStatus === 'exists' ? 'bg-amber-400' : 'bg-emerald-400'}`} />
-              <span className={`text-sm font-medium ${linkStatus === 'exists' ? 'text-amber-400' : 'text-emerald-400'}`}>
-                {linkStatus === 'exists' ? 'Link exists' : linkStatus === 'updated' ? 'Link updated' : 'Your link is ready'}
+              <span
+                className={`w-2 h-2 rounded-full animate-pulse ${
+                  linkStatus === 'exists' ? 'bg-amber-400' : 'bg-emerald-400'
+                }`}
+              />
+              <span
+                className={`text-sm font-medium ${
+                  linkStatus === 'exists' ? 'text-amber-400' : 'text-emerald-400'
+                }`}
+              >
+                {linkStatus === 'exists'
+                  ? 'Link exists'
+                  : linkStatus === 'updated'
+                  ? 'Link updated'
+                  : 'Your link is ready'}
               </span>
               {linkStatus !== 'new' && (
                 <span className="ml-auto text-xs text-slate-500 bg-slate-800 border border-slate-700 px-2 py-0.5 rounded-full">
@@ -229,7 +301,7 @@ export default function Home() {
 
             <div className="flex items-center gap-2 bg-violet-500/10 border border-violet-500/20 rounded-xl px-4 py-2.5">
               <span className="text-violet-300 text-sm font-semibold">
-                @{username.trim().replace(/^@/, "")}
+                @{username.trim().replace(/^@/, '')}
               </span>
               <span className="text-slate-500 text-xs ml-auto font-mono truncate">
                 {address.slice(0, 10)}…{address.slice(-6)}
@@ -244,7 +316,7 @@ export default function Home() {
               onClick={copyLink}
               className="w-full bg-slate-800 hover:bg-slate-700 active:bg-slate-600 text-white font-medium rounded-xl py-2.5 transition-colors text-sm border border-slate-700"
             >
-              {copied ? "✓ Copied to clipboard" : "Copy link"}
+              {copied ? '✓ Copied to clipboard' : 'Copy link'}
             </button>
 
             <p className="text-slate-500 text-xs text-center">
@@ -256,17 +328,9 @@ export default function Home() {
         {/* Feature pills */}
         <div className="grid grid-cols-3 gap-2.5">
           {[
-            {
-              icon: "⛽",
-              label: "Gas-free",
-              desc: "AVNU Paymaster covers fees",
-            },
-            {
-              icon: "🔐",
-              label: "Seedless",
-              desc: "Sign in with Email or Farcaster",
-            },
-            { icon: "⚡", label: "Instant", desc: "Confirmed in seconds" },
+            { icon: '⛽', label: 'Gas-free', desc: 'AVNU Paymaster covers fees' },
+            { icon: '🔐', label: 'Seedless', desc: 'Sign in with Email or Farcaster' },
+            { icon: '⚡', label: 'Instant', desc: 'Confirmed in seconds' },
           ].map((f) => (
             <div
               key={f.label}
@@ -274,13 +338,11 @@ export default function Home() {
             >
               <div className="text-xl">{f.icon}</div>
               <div className="text-white text-xs font-semibold">{f.label}</div>
-              <div className="text-slate-500 text-xs leading-tight">
-                {f.desc}
-              </div>
+              <div className="text-slate-500 text-xs leading-tight">{f.desc}</div>
             </div>
           ))}
         </div>
       </div>
     </Layout>
-  );
+  )
 }

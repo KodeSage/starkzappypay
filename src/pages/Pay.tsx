@@ -6,9 +6,9 @@ import { StarkSigner, ArgentXV050Preset } from 'starkzap'
 import Layout from '../components/Layout'
 import { TOKENS, Token, parseAmount, formatAmount } from '../lib/tokens'
 import { sdk, RPC_URL } from '../lib/sdk'
-import { resolveUsername, type UsernameRecord } from '../lib/supabase'
+import { resolveUsername, type UsernameRecord, logTip, getTips, type TipRecord, getGoalProgress } from '../lib/supabase'
+import { fetchSwapQuote, buildSwapCall, type SwapQuote } from '../lib/avnu'
 
-// Derivation message — changing this would create a different Starknet key
 const DERIVATION_MSG = 'starkzappypay: authorize my Starknet wallet'
 
 function truncateAddress(addr: string): string {
@@ -36,17 +36,22 @@ export default function Pay() {
   const { identifier } = useParams<{ identifier: string }>()
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
-  useLocation() // keep router context fresh
+  useLocation()
 
   const isUsernameLink = identifier?.startsWith('@')
   const displayName = isUsernameLink ? identifier!.slice(1) : null
 
-  // For raw address links, resolve immediately from params
   const [resolved, setResolved] = useState<UsernameRecord | null>(
-    !isUsernameLink ? { username: '', address: identifier ?? '', message: searchParams.get('msg') ?? '' } : null
+    !isUsernameLink
+      ? { username: '', address: identifier ?? '', message: searchParams.get('msg') ?? '' }
+      : null
   )
   const [resolving, setResolving] = useState(isUsernameLink ?? false)
   const [notFound, setNotFound] = useState(false)
+
+  // Wall of tips state
+  const [tips, setTips] = useState<TipRecord[]>([])
+  const [goalProgress, setGoalProgress] = useState(0)
 
   useEffect(() => {
     if (!isUsernameLink || !displayName) return
@@ -61,8 +66,19 @@ export default function Pay() {
     })
   }, [isUsernameLink, displayName])
 
+  // Load tips and goal progress once resolved
+  useEffect(() => {
+    if (!displayName || !resolved) return
+    getTips(displayName).then(setTips)
+    if (resolved.goal_amount && resolved.preferred_token) {
+      getGoalProgress(displayName, resolved.preferred_token).then(setGoalProgress)
+    }
+  }, [displayName, resolved?.username])
+
   const recipientAddress = resolved?.address ?? ''
   const tipMessage = resolved?.message ?? ''
+  const preferredTokenSymbol = resolved?.preferred_token ?? 'STRK'
+  const preferredTokenObj = TOKENS.find((t) => t.symbol === preferredTokenSymbol) ?? TOKENS[0]
 
   const { login, authenticated, ready, logout } = usePrivy()
   const { wallets } = useWallets()
@@ -75,104 +91,119 @@ export default function Pay() {
   const [sending, setSending] = useState(false)
   const [error, setError] = useState('')
 
+  // Tipper identity for wall of tips
+  const [tipperName, setTipperName] = useState('')
+  const [tipperMessage, setTipperMessage] = useState('')
+
+  // Swap quote state
+  const [swapQuote, setSwapQuote] = useState<SwapQuote | null>(null)
+  const [fetchingQuote, setFetchingQuote] = useState(false)
+
   const pendingConnectRef = useRef(false)
   const [addressCopied, setAddressCopied] = useState(false)
 
-  // Detect OAuth redirect landing (Google/Twitter/Discord redirect back to this page)
-  // Set pendingConnect so deriveAndConnect fires once Privy finishes processing the callback
+  const needsSwap = !!(
+    resolved?.preferred_token &&
+    selectedToken.symbol !== preferredTokenSymbol &&
+    swapQuote
+  )
+
+  // Detect OAuth redirect
   useEffect(() => {
     if (searchParams.has('privy_oauth_code') || searchParams.has('privy_oauth_state')) {
       pendingConnectRef.current = true
       setWalletState({ status: 'connecting', step: 'privy-login' })
-      // Strip the OAuth params from the URL so the page looks clean
       navigate(window.location.pathname, { replace: true })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Fires after Privy login completes and wallets populate
   useEffect(() => {
     if (!pendingConnectRef.current) return
     if (!authenticated || !wallets.length) return
     if (walletState.status === 'connected') return
-    // Already past login — don't re-trigger derivation
     if (walletState.status === 'connecting') {
       const { step } = walletState as Extract<WalletState, { status: 'connecting' }>
       if (step === 'deriving' || step === 'deploying') return
     }
-
     pendingConnectRef.current = false
     deriveAndConnect()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authenticated, wallets.length])
 
-  // Derive a stable address string to use as a proper effect dependency
   const connectedAddress = walletState.status === 'connected' ? walletState.address : null
 
-  // Fetch balance whenever wallet address or selected token changes
+  // Fetch balance when wallet/token changes
   useEffect(() => {
     if (!connectedAddress) return
-
     setBalance(null)
     setLoadingBalance(true)
     const provider = new RpcProvider({ nodeUrl: RPC_URL })
 
-    console.log('[balance] fetching for', connectedAddress, selectedToken.symbol)
-
     provider
-      .callContract({
-        contractAddress: selectedToken.address,
-        entrypoint: 'balanceOf',
-        calldata: [connectedAddress],
-      }, 'latest')
-      .catch((e) => {
-        console.warn('[balance] balanceOf failed, trying balance_of:', e?.message)
-        return provider.callContract({
-          contractAddress: selectedToken.address,
-          entrypoint: 'balance_of',
-          calldata: [connectedAddress],
-        }, 'latest')
-      })
+      .callContract(
+        { contractAddress: selectedToken.address, entrypoint: 'balanceOf', calldata: [connectedAddress] },
+        'latest'
+      )
+      .catch(() =>
+        provider.callContract(
+          { contractAddress: selectedToken.address, entrypoint: 'balance_of', calldata: [connectedAddress] },
+          'latest'
+        )
+      )
       .then((result) => {
-        console.log('[balance] raw result:', result)
         const raw = Array.isArray(result) ? result : (result as { result: string[] }).result
         const low = BigInt(raw[0] ?? '0')
         const high = BigInt(raw[1] ?? '0')
         setBalance(low + high * BigInt(2 ** 128))
       })
-      .catch((e) => {
-        console.error('[balance] final error:', e?.message, e)
-        setBalance(null)
-      })
+      .catch(() => setBalance(null))
       .finally(() => setLoadingBalance(false))
   }, [connectedAddress, selectedToken.address])
 
-  const deriveAndConnect = async () => {
-    const evmWallet = wallets.find(
-      (w) => w.walletClientType === 'privy'
-    ) ?? wallets[0]
+  // Fetch swap quote when amount/token changes (debounced)
+  useEffect(() => {
+    setSwapQuote(null)
+    if (!connectedAddress || !resolved?.preferred_token) return
+    if (selectedToken.symbol === preferredTokenSymbol) return
+    if (!amount || Number(amount) <= 0) return
 
+    const timer = setTimeout(async () => {
+      setFetchingQuote(true)
+      const parsedAmt = parseAmount(amount, selectedToken.decimals)
+      const quote = await fetchSwapQuote(
+        selectedToken.address,
+        preferredTokenObj.address,
+        parsedAmt,
+        connectedAddress
+      )
+      setSwapQuote(quote)
+      setFetchingQuote(false)
+    }, 600)
+
+    return () => {
+      clearTimeout(timer)
+      setFetchingQuote(false)
+    }
+  }, [connectedAddress, amount, selectedToken.symbol, preferredTokenSymbol])
+
+  const deriveAndConnect = async () => {
+    const evmWallet = wallets.find((w) => w.walletClientType === 'privy') ?? wallets[0]
     if (!evmWallet) return
 
     setError('')
     setWalletState({ status: 'connecting', step: 'deriving' })
 
     try {
-      // Step 1: Get EVM provider from Privy embedded wallet
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const provider = await (evmWallet as any).getEthereumProvider()
-
-      // Step 2: Sign derivation message — embedded wallets sign silently (no popup)
       const signature: string = await provider.request({
         method: 'personal_sign',
         params: [DERIVATION_MSG, evmWallet.address],
       })
-
-      // Step 3: Derive a valid Starknet private key from the EVM signature
       const starkPrivKey = ec.starkCurve.grindKey(signature)
       const signer = new StarkSigner(starkPrivKey)
 
-      // Step 4: Connect Starkzap wallet (Argent account, AVNU-sponsored)
       setWalletState({ status: 'connecting', step: 'deploying' })
       const szWallet = await sdk.connectWallet({
         account: { signer, accountClass: ArgentXV050Preset },
@@ -195,12 +226,10 @@ export default function Pay() {
   const handleConnect = async () => {
     setError('')
     if (!authenticated) {
-      // Not logged in: open Privy modal, then useEffect will call deriveAndConnect
       pendingConnectRef.current = true
       setWalletState({ status: 'connecting', step: 'privy-login' })
       await login()
     } else {
-      // Already logged in: connect directly (Privy is fully initialized by this point)
       await deriveAndConnect()
     }
   }
@@ -219,6 +248,7 @@ export default function Pay() {
     setBalance(null)
     setAmount('')
     setError('')
+    setSwapQuote(null)
   }
 
   const sendTip = async () => {
@@ -239,17 +269,79 @@ export default function Pay() {
     try {
       const { szWallet } = walletState
       const amountUint256 = uint256.bnToUint256(parsedAmount)
-      const call = {
-        contractAddress: selectedToken.address,
-        entrypoint: 'transfer',
-        calldata: CallData.compile({
-          recipient: recipientAddress,
-          amount: { low: amountUint256.low, high: amountUint256.high },
-        }),
+      let calls
+
+      const wantsSwap = resolved?.preferred_token && selectedToken.symbol !== preferredTokenSymbol
+
+      if (wantsSwap) {
+        // Fetch a fresh quote right before sending to avoid stale quotes
+        const freshQuote = await fetchSwapQuote(
+          selectedToken.address,
+          preferredTokenObj.address,
+          parsedAmount,
+          walletState.address
+        )
+
+        if (freshQuote) {
+          // takerAddress = recipient so bought tokens land directly with the creator
+          const swapCallData = await buildSwapCall(freshQuote.quoteId, recipientAddress)
+
+          if (swapCallData) {
+            // 1. Approve AVNU exchange to spend the sell token
+            const approveCall = {
+              contractAddress: selectedToken.address,
+              entrypoint: 'approve',
+              calldata: CallData.compile({
+                spender: swapCallData.contractAddress,
+                amount: { low: amountUint256.low, high: amountUint256.high },
+              }),
+            }
+            calls = [approveCall, swapCallData]
+          }
+        }
+
+        // Fall back to direct transfer if swap is unavailable
+        if (!calls) {
+          calls = [
+            {
+              contractAddress: selectedToken.address,
+              entrypoint: 'transfer',
+              calldata: CallData.compile({
+                recipient: recipientAddress,
+                amount: { low: amountUint256.low, high: amountUint256.high },
+              }),
+            },
+          ]
+        }
+      } else {
+        calls = [
+          {
+            contractAddress: selectedToken.address,
+            entrypoint: 'transfer',
+            calldata: CallData.compile({
+              recipient: recipientAddress,
+              amount: { low: amountUint256.low, high: amountUint256.high },
+            }),
+          },
+        ]
       }
-      const tx = await szWallet.execute([call], { feeMode: 'sponsored' })
+
+      const tx = await szWallet.execute(calls, { feeMode: 'sponsored' })
+
+      // Log tip to the wall (fire-and-forget, don't block navigation)
+      if (displayName) {
+        logTip({
+          recipient_username: displayName,
+          tipper_name: tipperName.trim(),
+          tipper_message: tipperMessage.trim(),
+          amount,
+          token: selectedToken.symbol,
+          tx_hash: tx.hash,
+        }).catch(console.error)
+      }
+
       navigate(
-        `/success/${tx.hash}?token=${selectedToken.symbol}&amount=${encodeURIComponent(amount)}`
+        `/success/${tx.hash}?token=${selectedToken.symbol}&amount=${encodeURIComponent(amount)}&recipient=${encodeURIComponent(displayName ?? '')}`
       )
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -277,6 +369,13 @@ export default function Pay() {
     return 'Connecting...'
   }
 
+  const showSwapBadge =
+    connected &&
+    resolved?.preferred_token &&
+    selectedToken.symbol !== preferredTokenSymbol &&
+    !!amount &&
+    Number(amount) > 0
+
   if (!ready || resolving) {
     return (
       <Layout>
@@ -295,14 +394,16 @@ export default function Pay() {
           <div className="bg-slate-900 rounded-2xl border border-slate-800 p-8 text-center space-y-3">
             <p className="text-4xl">🔍</p>
             <p className="text-white font-semibold text-lg">@{displayName} not found</p>
-            <p className="text-slate-400 text-sm">
-              This username hasn't been registered yet.
-            </p>
+            <p className="text-slate-400 text-sm">This username hasn't been registered yet.</p>
           </div>
         </div>
       </Layout>
     )
   }
+
+  const goalPct = resolved?.goal_amount
+    ? Math.min((goalProgress / resolved.goal_amount) * 100, 100)
+    : 0
 
   return (
     <Layout>
@@ -317,20 +418,51 @@ export default function Pay() {
             {displayName ? (
               <>
                 <p className="text-white font-bold text-xl">@{displayName}</p>
-                <p className="text-slate-500 text-xs font-mono">
-                  {truncateAddress(recipientAddress)}
-                </p>
+                <p className="text-slate-500 text-xs font-mono">{truncateAddress(recipientAddress)}</p>
               </>
             ) : (
-              <p className="text-slate-400 text-xs font-mono">
-                {truncateAddress(recipientAddress ?? '')}
-              </p>
+              <p className="text-slate-400 text-xs font-mono">{truncateAddress(recipientAddress ?? '')}</p>
             )}
             {tipMessage && (
               <p className="text-white font-semibold text-lg mt-1.5">"{tipMessage}"</p>
             )}
           </div>
         </div>
+
+        {/* Tip goal progress bar */}
+        {resolved?.goal_amount && resolved.goal_amount > 0 && (
+          <div className="bg-slate-900 rounded-2xl border border-slate-800 p-5 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <p className="text-white text-sm font-semibold">
+                  {resolved.goal_label || 'Tip goal'}
+                </p>
+                <p className="text-slate-500 text-xs mt-0.5">
+                  {goalPct >= 100 ? 'Goal reached!' : `${Math.round(goalPct)}% funded`}
+                </p>
+              </div>
+              <div className="text-right flex-shrink-0">
+                <p className="text-violet-400 text-sm font-bold">
+                  {goalProgress.toFixed(goalProgress % 1 === 0 ? 0 : 2)}
+                </p>
+                <p className="text-slate-500 text-xs">
+                  of {resolved.goal_amount} {preferredTokenSymbol}
+                </p>
+              </div>
+            </div>
+            <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
+              <div
+                className="h-2 rounded-full transition-all duration-500"
+                style={{
+                  width: `${goalPct}%`,
+                  background: goalPct >= 100
+                    ? 'linear-gradient(90deg, #10b981, #34d399)'
+                    : 'linear-gradient(90deg, #7c3aed, #a78bfa)',
+                }}
+              />
+            </div>
+          </div>
+        )}
 
         {/* Action card */}
         <div className="bg-slate-900 rounded-2xl border border-slate-800 p-6 space-y-5">
@@ -346,7 +478,6 @@ export default function Pay() {
                 </p>
               </div>
 
-              {/* Signed-in badge */}
               {authenticated && !connecting && (
                 <div className="flex items-center gap-2 bg-slate-800/60 border border-slate-700 rounded-xl px-4 py-2.5">
                   <span className="w-2 h-2 rounded-full bg-violet-400 flex-shrink-0" />
@@ -368,8 +499,8 @@ export default function Pay() {
                 {connecting
                   ? <><Spinner />{connectLabel()}</>
                   : authenticated
-                    ? 'Activate Starknet Wallet'
-                    : 'Connect & Tip'}
+                  ? 'Activate Starknet Wallet'
+                  : 'Connect & Tip'}
               </button>
 
               {!authenticated && (
@@ -417,12 +548,10 @@ export default function Pay() {
                   </button>
                 </div>
 
-                {/* Address display */}
                 <div className="bg-slate-900 rounded-lg px-3 py-2.5 font-mono text-xs text-slate-300 break-all leading-relaxed">
-                  {(walletState as Extract<WalletState, {status:'connected'}>).address}
+                  {(walletState as Extract<WalletState, { status: 'connected' }>).address}
                 </div>
 
-                {/* Copy button */}
                 <button
                   onClick={copyAddress}
                   className={`w-full flex items-center justify-center gap-2 rounded-lg py-2.5 text-sm font-medium transition-all border ${
@@ -444,23 +573,30 @@ export default function Pay() {
                   )}
                 </button>
 
-                {/* Funding notice */}
                 <div className="flex gap-2 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2.5">
                   <span className="text-amber-400 flex-shrink-0 mt-0.5">ℹ</span>
                   <p className="text-amber-300/80 text-xs leading-relaxed">
-                    <span className="font-semibold text-amber-300">Note:</span> This is your starkzappypay wallet address. To tip someone, send STRK, USDC, or ETH to this address from your main Starknet wallet first.
+                    <span className="font-semibold text-amber-300">Note:</span> This is your starkzappypay wallet. Send STRK, USDC, or ETH here from your main wallet first.
                   </p>
                 </div>
               </div>
 
               {/* Token selector */}
               <div className="space-y-2">
-                <label className="text-sm font-medium text-slate-300">Token</label>
+                <div className="flex items-center justify-between">
+                  <label className="text-sm font-medium text-slate-300">Token</label>
+                  {resolved?.preferred_token && (
+                    <span className="text-xs text-slate-500">
+                      Creator prefers{' '}
+                      <span className="text-violet-400 font-medium">{preferredTokenSymbol}</span>
+                    </span>
+                  )}
+                </div>
                 <div className="grid grid-cols-3 gap-2">
                   {TOKENS.map((token) => (
                     <button
                       key={token.symbol}
-                      onClick={() => { setSelectedToken(token); setError(''); setAmount('') }}
+                      onClick={() => { setSelectedToken(token); setError(''); setAmount(''); setSwapQuote(null) }}
                       className={`flex flex-col items-center gap-1.5 py-3 rounded-xl border transition-all ${
                         selectedToken.symbol === token.symbol
                           ? 'border-violet-500 bg-violet-500/10 text-white'
@@ -469,6 +605,9 @@ export default function Pay() {
                     >
                       <span className="text-lg font-semibold">{token.icon}</span>
                       <span className="text-xs font-medium">{token.symbol}</span>
+                      {token.symbol === preferredTokenSymbol && (
+                        <span className="text-[10px] text-violet-400 font-medium -mt-0.5">preferred</span>
+                      )}
                     </button>
                   ))}
                 </div>
@@ -486,8 +625,8 @@ export default function Pay() {
                     {loadingBalance
                       ? <><Spinner />Loading...</>
                       : balance !== null
-                        ? `Balance: ${formatAmount(balance, selectedToken.decimals)} ${selectedToken.symbol}`
-                        : 'Balance unavailable'}
+                      ? `Balance: ${formatAmount(balance, selectedToken.decimals)} ${selectedToken.symbol}`
+                      : 'Balance unavailable'}
                   </button>
                 </div>
 
@@ -523,6 +662,64 @@ export default function Pay() {
                 </div>
               </div>
 
+              {/* Auto-swap preview */}
+              {showSwapBadge && (
+                <div className="bg-violet-500/10 border border-violet-500/20 rounded-xl px-4 py-3 space-y-1">
+                  <p className="text-violet-300 text-xs font-semibold uppercase tracking-wide">Auto-swap</p>
+                  {fetchingQuote ? (
+                    <div className="flex items-center gap-2 text-slate-400 text-xs">
+                      <Spinner />
+                      <span>Getting quote…</span>
+                    </div>
+                  ) : swapQuote ? (
+                    <p className="text-slate-200 text-sm">
+                      You send{' '}
+                      <span className="font-semibold">{amount} {selectedToken.symbol}</span>
+                      {' → '}creator receives{' '}
+                      <span className="font-semibold text-violet-300">
+                        ~{formatAmount(BigInt(swapQuote.buyAmount), preferredTokenObj.decimals)} {preferredTokenSymbol}
+                      </span>
+                    </p>
+                  ) : (
+                    <p className="text-slate-400 text-xs">
+                      Quote unavailable — will send {selectedToken.symbol} directly
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Tipper identity */}
+              <div className="space-y-3 pt-1">
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium text-slate-300">
+                    Your name{' '}
+                    <span className="text-slate-500 font-normal">(optional — shows on wall of tips)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={tipperName}
+                    onChange={(e) => setTipperName(e.target.value)}
+                    placeholder="anonymous"
+                    maxLength={30}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-white placeholder-slate-500 text-sm focus:border-violet-500 transition-colors"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium text-slate-300">
+                    Message{' '}
+                    <span className="text-slate-500 font-normal">(optional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={tipperMessage}
+                    onChange={(e) => setTipperMessage(e.target.value)}
+                    placeholder="Keep up the great work!"
+                    maxLength={100}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-white placeholder-slate-500 text-sm focus:border-violet-500 transition-colors"
+                  />
+                </div>
+              </div>
+
               {error && (
                 <p className="text-red-400 text-sm bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
                   {error}
@@ -536,6 +733,8 @@ export default function Pay() {
               >
                 {sending
                   ? <><Spinner />Sending...</>
+                  : needsSwap
+                  ? `Swap & send ${amount || '0'} ${selectedToken.symbol} → ${preferredTokenSymbol}`
                   : `Send ${amount || '0'} ${selectedToken.symbol}`}
               </button>
 
@@ -546,6 +745,41 @@ export default function Pay() {
             </>
           )}
         </div>
+
+        {/* Wall of Tips */}
+        {tips.length > 0 && (
+          <div className="bg-slate-900 rounded-2xl border border-slate-800 p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-white font-semibold text-sm">Recent supporters</h3>
+              <span className="text-slate-500 text-xs">{tips.length} tip{tips.length !== 1 ? 's' : ''}</span>
+            </div>
+            <div className="space-y-3">
+              {tips.map((tip, i) => (
+                <div key={tip.id ?? i} className="flex items-start gap-3">
+                  <div className="w-8 h-8 rounded-full bg-violet-500/20 border border-violet-500/20 flex items-center justify-center text-sm font-bold text-violet-300 flex-shrink-0 uppercase">
+                    {tip.tipper_name ? tip.tipper_name.slice(0, 1) : '?'}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-white text-sm font-medium truncate">
+                        {tip.tipper_name || 'Anonymous'}
+                      </span>
+                      <span className="text-violet-400 text-xs font-semibold flex-shrink-0">
+                        {tip.amount} {tip.token}
+                      </span>
+                    </div>
+                    {tip.tipper_message && (
+                      <p className="text-slate-400 text-xs mt-0.5 leading-relaxed line-clamp-2">
+                        "{tip.tipper_message}"
+                      </p>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
       </div>
     </Layout>
   )
