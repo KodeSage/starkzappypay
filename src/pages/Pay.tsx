@@ -52,6 +52,8 @@ export default function Pay() {
   // Wall of tips state
   const [tips, setTips] = useState<TipRecord[]>([])
   const [goalProgress, setGoalProgress] = useState(0)
+  const [tipsPage, setTipsPage] = useState(0)
+  const TIPS_PER_PAGE = 6
 
   useEffect(() => {
     if (!isUsernameLink || !displayName) return
@@ -91,10 +93,12 @@ export default function Pay() {
   const [sending, setSending] = useState(false)
   const [swapStep, setSwapStep] = useState<'swapping' | 'sending' | null>(null)
   const [error, setError] = useState('')
+  const [swapGasError, setSwapGasError] = useState(false)
 
   // Tipper identity for wall of tips
   const [tipperName, setTipperName] = useState('')
   const [tipperMessage, setTipperMessage] = useState('')
+  const [tipperExpanded, setTipperExpanded] = useState(false)
 
   // Swap quote state
   const [swapQuote, setSwapQuote] = useState<SwapQuote | null>(null)
@@ -252,9 +256,10 @@ export default function Pay() {
     setSwapQuote(null)
   }
 
-  const sendTip = async () => {
+  const sendTip = async (skipSwap = false) => {
     if (walletState.status !== 'connected' || !recipientAddress) return
     setError('')
+    setSwapGasError(false)
 
     const parsedAmount = parseAmount(amount, selectedToken.decimals)
     if (parsedAmount === BigInt(0)) {
@@ -271,7 +276,7 @@ export default function Pay() {
       const { szWallet } = walletState
       const amountUint256 = uint256.bnToUint256(parsedAmount)
 
-      const wantsSwap = resolved?.preferred_token && selectedToken.symbol !== preferredTokenSymbol
+      const wantsSwap = !skipSwap && resolved?.preferred_token && selectedToken.symbol !== preferredTokenSymbol
 
       if (wantsSwap) {
         // --- Two-step swap flow ---
@@ -301,13 +306,37 @@ export default function Pay() {
         const logToken = preferredTokenSymbol
         const logAmount = formatAmount(minReceived, preferredTokenObj.decimals)
 
-        // Step 1: Execute approve + swap — USDC lands in sender's wallet
+        // Step 1: Execute approve + swap — target token lands in sender's wallet.
+        // AVNU's paymaster internally caps sponsored tx at 1.2B L2 gas. Complex
+        // multi-route swaps can exceed this limit. When that happens we surface a
+        // clear error and let the user decide — offering a direct-send fallback.
         setSwapStep('swapping')
-        const swapTx = await szWallet.execute(swapCalls, { feeMode: 'sponsored' })
+        let swapTxHash: string
+        try {
+          const swapTx = await szWallet.execute(swapCalls, { feeMode: 'sponsored' })
+          swapTxHash = swapTx.hash
+        } catch (sponsoredErr) {
+          const sponsoredMsg = (sponsoredErr instanceof Error ? sponsoredErr.message : String(sponsoredErr)).toLowerCase()
+          if (
+            sponsoredMsg.includes('gas amount') ||
+            sponsoredMsg.includes('max gas') ||
+            sponsoredMsg.includes('resources bounds') ||
+            sponsoredMsg.includes('resource bounds')
+          ) {
+            setSending(false)
+            setSwapStep(null)
+            setSwapGasError(true)
+            setError(
+              `Gasless swap unavailable right now — the route for ${selectedToken.symbol}→${preferredTokenSymbol} requires too much network gas for the paymaster. You can send ${amount} ${selectedToken.symbol} directly instead (tap "Send directly" below).`
+            )
+            return
+          }
+          throw sponsoredErr
+        }
 
         // Wait for the swap to confirm so the sender actually holds USDC
         const rpcProvider = new RpcProvider({ nodeUrl: RPC_URL })
-        await rpcProvider.waitForTransaction(swapTx.hash, { retryInterval: 2000 })
+        await rpcProvider.waitForTransaction(swapTxHash, { retryInterval: 2000 })
 
         // Step 2: Transfer USDC from sender to creator
         setSwapStep('sending')
@@ -437,7 +466,7 @@ export default function Pay() {
 
   return (
     <Layout>
-      <div className="w-full max-w-md space-y-4">
+      <div className="w-full max-w-5xl space-y-4">
 
         {/* Recipient card */}
         <div className="bg-slate-900 rounded-2xl border border-slate-800 p-6 text-center space-y-3">
@@ -500,6 +529,9 @@ export default function Pay() {
             </div>
           </div>
         )}
+
+        {/* Action card + Wall of Tips side by side */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
 
         {/* Action card */}
         <div className="bg-slate-900 rounded-2xl border border-slate-800 p-6 space-y-5">
@@ -725,36 +757,62 @@ export default function Pay() {
                 </div>
               )}
 
-              {/* Tipper identity */}
-              <div className="space-y-3 pt-1">
-                <div className="space-y-1.5">
-                  <label className="text-sm font-medium text-slate-300">
-                    Your name{' '}
-                    <span className="text-slate-500 font-normal">(optional — shows on wall of tips)</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={tipperName}
-                    onChange={(e) => setTipperName(e.target.value)}
-                    placeholder="anonymous"
-                    maxLength={30}
-                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-white placeholder-slate-500 text-sm focus:border-violet-500 transition-colors"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-sm font-medium text-slate-300">
-                    Message{' '}
-                    <span className="text-slate-500 font-normal">(optional)</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={tipperMessage}
-                    onChange={(e) => setTipperMessage(e.target.value)}
-                    placeholder="Keep up the great work!"
-                    maxLength={100}
-                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-white placeholder-slate-500 text-sm focus:border-violet-500 transition-colors"
-                  />
-                </div>
+              {/* Tipper identity — collapsible */}
+              <div className="space-y-1.5">
+                <button
+                  type="button"
+                  onClick={() => setTipperExpanded((v) => !v)}
+                  className="w-full flex items-center justify-between gap-2 group"
+                >
+                  <div className="text-left">
+                    <span className="text-sm font-medium text-slate-300">Add your name &amp; message</span>
+                    <span className="text-slate-500 text-sm font-normal"> (optional)</span>
+                    {!tipperExpanded && (tipperName || tipperMessage) && (
+                      <span className="ml-2 text-xs text-violet-400 font-medium truncate max-w-[120px] inline-block align-bottom">
+                        {tipperName || tipperMessage}
+                      </span>
+                    )}
+                  </div>
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    className={`w-4 h-4 text-slate-500 group-hover:text-slate-300 transition-transform duration-200 flex-shrink-0 ${tipperExpanded ? 'rotate-180' : ''}`}
+                    fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+
+                {tipperExpanded && (
+                  <div className="space-y-3 pt-1">
+                    <div className="space-y-1.5">
+                      <label className="text-sm font-medium text-slate-300">
+                        Your name{' '}
+                        <span className="text-slate-500 font-normal">(shows on wall of tips)</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={tipperName}
+                        onChange={(e) => setTipperName(e.target.value)}
+                        placeholder="anonymous"
+                        maxLength={30}
+                        className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-white placeholder-slate-500 text-sm focus:border-violet-500 transition-colors"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-sm font-medium text-slate-300">
+                        Message
+                      </label>
+                      <input
+                        type="text"
+                        value={tipperMessage}
+                        onChange={(e) => setTipperMessage(e.target.value)}
+                        placeholder="Keep up the great work!"
+                        maxLength={100}
+                        className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-white placeholder-slate-500 text-sm focus:border-violet-500 transition-colors"
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
 
               {error && (
@@ -763,8 +821,23 @@ export default function Pay() {
                 </p>
               )}
 
+              {swapGasError && (
+                <button
+                  onClick={() => {
+                    setSwapGasError(false)
+                    setError('')
+                    // Execute direct transfer of selected token, bypassing swap
+                    sendTip(true)
+                  }}
+                  disabled={sending || !amount || Number(amount) <= 0}
+                  className="w-full bg-slate-700 hover:bg-slate-600 active:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed text-white font-medium rounded-xl py-3 transition-colors text-sm border border-slate-600"
+                >
+                  Send {amount || '0'} {selectedToken.symbol} directly (skip swap)
+                </button>
+              )}
+
               <button
-                onClick={sendTip}
+                onClick={() => sendTip(false)}
                 disabled={sending || !amount || Number(amount) <= 0}
                 className="w-full bg-violet-600 hover:bg-violet-500 active:bg-violet-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold rounded-xl py-3.5 transition-colors flex items-center justify-center gap-2"
               >
@@ -795,7 +868,7 @@ export default function Pay() {
               <span className="text-slate-500 text-xs">{tips.length} tip{tips.length !== 1 ? 's' : ''}</span>
             </div>
             <div className="space-y-3">
-              {tips.map((tip, i) => (
+              {tips.slice(tipsPage * TIPS_PER_PAGE, (tipsPage + 1) * TIPS_PER_PAGE).map((tip, i) => (
                 <a
                   key={tip.id ?? i}
                   href={tip.tx_hash ? `https://voyager.online/tx/${tip.tx_hash}` : undefined}
@@ -838,8 +911,37 @@ export default function Pay() {
                 </a>
               ))}
             </div>
+            {tips.length > TIPS_PER_PAGE && (
+              <div className="flex items-center justify-between pt-1 border-t border-slate-800">
+                <button
+                  onClick={() => setTipsPage((p) => Math.max(0, p - 1))}
+                  disabled={tipsPage === 0}
+                  className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors px-2 py-1 rounded-lg hover:bg-slate-800"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  </svg>
+                  Prev
+                </button>
+                <span className="text-slate-600 text-xs">
+                  {tipsPage + 1} / {Math.ceil(tips.length / TIPS_PER_PAGE)}
+                </span>
+                <button
+                  onClick={() => setTipsPage((p) => Math.min(Math.ceil(tips.length / TIPS_PER_PAGE) - 1, p + 1))}
+                  disabled={(tipsPage + 1) * TIPS_PER_PAGE >= tips.length}
+                  className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors px-2 py-1 rounded-lg hover:bg-slate-800"
+                >
+                  Next
+                  <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </button>
+              </div>
+            )}
           </div>
         )}
+
+        </div>{/* end side-by-side grid */}
 
       </div>
     </Layout>
