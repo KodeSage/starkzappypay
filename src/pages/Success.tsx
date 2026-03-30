@@ -94,7 +94,7 @@ export default function Success() {
           {recipient && (
             <a
               href={`https://twitter.com/intent/tweet?text=${encodeURIComponent(
-                `Just supported @${recipient} on starkzappy pay ⚡\n\nZero gas fees, instant tips on @Starknet.\n\nTip them too → https://starkzappypay.vercel.app//pay/@${recipient}`,
+                `Just supported @${recipient} on starkzappy pay ⚡\n\nZero gas fees, instant tips on @Starknet.\n\nTip them too → https://starkzappypay.vercel.app/pay/@${recipient}`,
               )}`}
               target="_blank"
               rel="noopener noreferrer"
