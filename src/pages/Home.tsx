@@ -12,8 +12,9 @@ function isValidStarknetAddress(addr: string): boolean {
   return /^0x[0-9a-fA-F]{1,64}$/.test(addr.trim());
 }
 
+/** X/Twitter handle rules: 1–15 chars, letters, numbers, underscores only. */
 function isValidUsername(u: string): boolean {
-  return /^[a-zA-Z0-9_]{1,30}$/.test(u);
+  return /^[a-zA-Z0-9_]{1,15}$/.test(u);
 }
 
 export default function Home() {
@@ -89,7 +90,7 @@ export default function Home() {
     }
     if (!isValidUsername(trimmedUser)) {
       setError(
-        "Username may only contain letters, numbers, and underscores (max 30 chars)",
+        "Use 1–15 characters: letters, numbers, and underscores only (same rules as X)",
       );
       return;
     }
@@ -162,11 +163,15 @@ export default function Home() {
 
           {/* Left — Form card */}
           <div className="bg-slate-900 rounded-2xl border border-slate-800 p-6 space-y-4">
-            {/* Username */}
+            {/* Pay handle (X/Twitter-style) */}
             <div className="space-y-1.5">
               <label className="text-sm font-medium text-slate-300">
-                Username
+                Pay handle
               </label>
+              <p className="text-slate-500 text-xs leading-relaxed -mt-0.5">
+                Use the same name as your X (Twitter) username so people recognize
+                you.
+              </p>
               <div className="relative">
                 <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 text-sm select-none">
                   @
@@ -178,13 +183,13 @@ export default function Home() {
                     setUsername(e.target.value.replace(/^@/, ""));
                     setError("");
                   }}
-                  placeholder="alice"
-                  maxLength={30}
+                  placeholder="yourname"
+                  maxLength={15}
                   className="w-full bg-slate-800 border border-slate-700 rounded-xl pl-8 pr-4 py-3 text-white placeholder-slate-500 text-sm focus:border-violet-500 transition-colors"
                 />
               </div>
               <p className="text-slate-600 text-xs">
-                Creates a clean link like{" "}
+                Your link:{" "}
                 <span className="text-slate-500 font-mono">
                   /pay/@{username || "you"}
                 </span>
